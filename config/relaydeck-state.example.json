@@ -1,0 +1,27 @@
+{
+  "routing_view_mode": "by_model",
+  "suppliers": [],
+  "api_profiles": [],
+  "model_routes": [],
+  "route_bindings": [],
+  "model_families": [
+    "GPT 系列",
+    "Claude 系列",
+    "GLM 系列",
+    "DeepSeek 系列",
+    "Gemini 系列",
+    "Image 系列",
+    "Banana 系列",
+    "Grok 系列",
+    "Mimo 系列"
+  ],
+  "router_settings": {
+    "routing_strategy": "simple-shuffle",
+    "num_retries": 2,
+    "timeout": 60,
+    "fallbacks": []
+  },
+  "litellm_settings": {
+    "drop_params": true
+  }
+}

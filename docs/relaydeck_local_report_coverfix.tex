@@ -1,0 +1,349 @@
+\documentclass[12pt,a4paper]{ctexart}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{setspace}
+\usepackage{caption}
+
+\setCJKmainfont{Microsoft YaHei}
+\setstretch{1.25}
+\graphicspath{{image/}}
+\captionsetup{font=small}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue,
+  pdftitle={RelayDeck Local 项目报告},
+  pdfauthor={龙宇旸}
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!5}
+}
+
+\begin{document}
+
+\begin{titlepage}
+  \thispagestyle{empty}
+  \centering
+  \vspace*{0.8cm}
+
+  {\fontsize{20pt}{24pt}\selectfont\bfseries 暨南大学\par}
+  \vspace{0.2cm}
+  {\fontsize{13pt}{18pt}\selectfont JINAN UNIVERSITY\par}
+
+  \vspace{1.2cm}
+  {\fontsize{22pt}{28pt}\selectfont\bfseries 暨南大学本科生课程论文\par}
+
+  \vspace{1.2cm}
+  {\fontsize{17pt}{22pt}\selectfont\bfseries RelayDeck Local 项目报告\par}
+  \vspace{0.35cm}
+  {\fontsize{14pt}{18pt}\selectfont 本地多供应商大模型路由与管理平台\par}
+
+  \vspace{1.2cm}
+  {\fontsize{14pt}{21pt}\selectfont
+  \begin{tabular}{p{3.0cm}p{0.7cm}p{8.2cm}}
+    学\hfill 院 & ： & \underline{\makebox[8.0cm][c]{信息科学技术学院}} \\
+    [0.28cm]
+    专\hfill 业 & ： & \underline{\makebox[8.0cm][c]{计算机科学与技术}} \\
+    [0.28cm]
+    学生姓名 & ： & \underline{\makebox[8.0cm][c]{龙宇旸}} \\
+    [0.28cm]
+    学\hfill 号 & ： & \underline{\makebox[8.0cm][c]{2023104689}} \\
+    [0.28cm]
+    课程名称 & ： & \underline{\makebox[8.0cm][c]{机器学习}} \\
+    [0.28cm]
+    指导教师 & ： & \underline{\makebox[8.0cm][c]{郭腾}} \\
+  \end{tabular}\par}
+
+  \vfill
+  {\fontsize{14pt}{18pt}\selectfont 2026 年 7 月 8 日\par}
+\end{titlepage}
+
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+\section{项目概述}
+
+RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台。项目将 LiteLLM 统一网关、Open WebUI 聊天前台和自研管理后台整合在一起，目标是解决多供应商模型接入、统一命名、路由兜底、额度监控、接口测试和运维可视化等问题。
+
+与普通的单模型调用工具相比，本项目更强调“复杂路由的可管理性”。系统不只是把一个模型 API 接进来，而是支持同一个公共模型名挂接多个上游供应商，并按优先级形成主路由、第一备用、第二备用等 fallback 链路，从而提升整体可用性与可维护性。
+
+\section{需求分析}
+
+\subsection{总体需求}
+
+结合项目目标和实际调试过程，系统需要满足以下核心需求：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 支持多个供应商同时接入，并为每个供应商维护独立的 API Profile。
+  \item 支持公共模型名与真实上游模型名分离，前台统一展示公共模型名，后台保留真实上游配置。
+  \item 支持同一公共模型挂接多个上游绑定，并按优先级顺序完成请求转发与失败兜底。
+  \item 支持额度查看、周期刷新、供应商余额抓取和人工校准记录。
+  \item 支持管理端对单个 API、单个模型绑定以及整条模型路由进行测试和调试。
+  \item 支持聊天前台通过统一网关直接调用已经配置好的模型，而不是手工切换不同供应商。
+\end{enumerate}
+
+\subsection{功能性需求}
+
+\begin{longtable}{p{3.2cm}p{10.2cm}}
+\toprule
+模块 & 需求说明 \\
+\midrule
+\endhead
+供应商管理 & 支持新增、启停、分组、备注、API Base、API Key、模型列表同步与额度配置。 \\
+模型路由 & 支持按模型视图维护公共模型，支持一个公共模型绑定多个上游并设置优先级。 \\
+路由兜底 & 在主路由失败时自动切换至备用上游，保证统一模型入口尽量可用。 \\
+额度监控 & 支持余额刷新、自动轮询、异常提示、人工校准和供应商适配脚本扩展。 \\
+接口测试 & 将测试拆分为“测试网络”和“测试对话”，分别验证连通性与真实可用性。 \\
+界面交互 & 支持折叠面板、搜索、置顶、批量测试、状态标签和提示弹窗。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{非功能性需求}
+
+\begin{enumerate}[label=\arabic*.]
+  \item 系统应便于扩展新供应商，不能把所有特殊逻辑硬编码在同一处。
+  \item 管理页面应支持大规模模型与绑定配置，避免信息堆叠导致不可维护。
+  \item 测试结果应直观可见，便于区分“网络异常”和“对话失败”两类问题。
+  \item 关键入口应尽量前置，减少多层展开后才能操作的问题。
+\end{enumerate}
+
+\section{系统设计}
+
+\subsection{总体架构}
+
+系统采用三层结构：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 管理层：由管理页负责供应商、模型、额度、环境变量、测试与日志管理。
+  \item 路由层：由 LiteLLM 负责统一模型入口、公共模型别名、路由顺序和请求转发。
+  \item 交互层：由 Open WebUI 负责最终聊天交互界面。
+\end{enumerate}
+
+其请求链路可概括为：
+
+\begin{center}
+用户请求 $\rightarrow$ Open WebUI $\rightarrow$ LiteLLM $\rightarrow$ 目标供应商 API
+\end{center}
+
+\subsection{关键设计思想}
+
+\subsubsection{公共模型名与真实模型名分离}
+
+项目中最重要的一项设计，是区分“用户看到的模型名”和“系统实际请求的模型名”：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 前台主要暴露公共模型名，如 \texttt{gpt-5.4}。
+  \item 每个供应商绑定可保留自己的 \texttt{upstream\_model}，如 \texttt{openai/gpt-5.4} 或 \texttt{gpt-5.4}。
+  \item 这样既保证了统一使用体验，也保留了不同供应商的真实实现差异。
+\end{enumerate}
+
+\subsubsection{多上游绑定与 fallback}
+
+同一个公共模型下可绑定多个候选上游。系统按照优先级从小到大尝试：
+
+\begin{itemize}
+  \item 优先级最高者作为主路由；
+  \item 后续条目作为备用链路；
+  \item 当主路由异常、欠费或对话失败时，可切换至下一个候选上游。
+\end{itemize}
+
+\subsubsection{供应商额度适配脚本}
+
+不同供应商后台的数据接口并不统一，因此项目使用 \texttt{quota-adapters/} 目录承载额度适配脚本。每个供应商可以根据自身站点结构、认证方式和返回数据格式编写对应脚本，从而实现可扩展的余额抓取能力。
+
+\section{关键实现与迭代}
+
+\subsection{管理首页与整体布局}
+
+图 \ref{fig:dashboard-overview} 展示了管理后台当前的总体界面。左侧为系统状态与快捷入口，右侧为模型路由主工作区。该设计将服务状态、管理入口、模型路由配置和批量调试操作集中到同一页面，减少了来回切换页面的成本。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig01-dashboard-overview.png}
+  \caption{管理首页总览：左侧为服务状态与导航入口，右侧为模型路由主工作区}
+  \label{fig:dashboard-overview}
+\end{figure}
+
+\subsection{按模型视图与上游绑定管理}
+
+图 \ref{fig:route-bindings-initial} 展示了公共模型 \texttt{gpt-5.4} 的上游绑定列表。每个绑定项都展示供应商名称、真实上游模型、路由角色和优先级。相比单纯显示 \texttt{P100}、\texttt{P110} 的形式，系统改为使用“主路由”“第一备用”“第二备用”等可读性更强的说明，有利于快速判断 fallback 顺序。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig02-route-bindings-initial.png}
+  \caption{按模型视图中的上游绑定列表：展示主路由、备用链路与批量测试入口}
+  \label{fig:route-bindings-initial}
+\end{figure}
+
+\subsection{测试逻辑拆分：网络与对话}
+
+项目调试过程中发现，仅凭 \texttt{/models} 返回成功并不能保证模型真的可对话。因此系统把测试逻辑拆分为两层：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 测试网络：检查 API Base、鉴权和 \texttt{/models} 连通性，成本低，适合批量排查。
+  \item 测试对话：发送最小聊天请求，验证模型是否真能被聊天前台使用，结果更接近实际使用场景。
+\end{enumerate}
+
+图 \ref{fig:route-bindings-network} 显示了批量测试网络后的状态结果。可以看到不同绑定的网络标签已经分别显示为“可用”“待确认”或“异常”，这有助于在不额外消耗大量额度的情况下先完成第一轮筛查。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig03-route-bindings-network.png}
+  \caption{批量测试网络后的绑定状态：不同上游会显示可用、待确认或异常}
+  \label{fig:route-bindings-network}
+\end{figure}
+
+\subsection{按供应商视图与 API 管理}
+
+除了按模型查看外，系统还支持按供应商视图查看配置。图 \ref{fig:supplier-view} 展示了供应商列表总览，适合从“某个供应商下有哪些 API、模型绑定数量如何”的角度进行维护。供应商视图用于补充模型视图，使系统既能从业务模型组织，也能从实际供应商组织。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig04-supplier-view.png}
+  \caption{按供应商视图：展示供应商列表、绑定数量和自动保存状态}
+  \label{fig:supplier-view}
+\end{figure}
+
+图 \ref{fig:api-actions} 进一步展示了某个 API Profile 的配置与操作区。测试按钮被放置在“模型关联与操作”模块顶部，便于先验证 API，再进行模型同步、绑定与删除等操作，符合“高频调试操作前置”的设计目标。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig06-api-actions.png}
+  \caption{单个 API Profile 的操作区：在顶部提供测试网络、测试对话和模型关联入口}
+  \label{fig:api-actions}
+\end{figure}
+
+\subsection{额度监控与登录态异常提示}
+
+灵算供应商的额度页面不仅需要展示余额，还需要明确提示登录态是否失效。图 \ref{fig:lingsuan-quota} 展示了灵算额度概览界面，其中后台登录态失效时会直接给出错误提示，例如 \texttt{HTTP 401}，从而让管理员快速判断问题来自站点登录态而不是余额脚本本身。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig05-lingsuan-quota.png}
+  \caption{灵算额度概览：支持显示最新刷新时间、真实余额校准与登录态异常提示}
+  \label{fig:lingsuan-quota}
+\end{figure}
+
+\subsection{模型性价比统计}
+
+图 \ref{fig:model-stats} 展示了模型性价比统计面板。该面板按公共模型聚合不同上游的成本、成功率和当前顺序，帮助管理员在“可用性”和“成本”之间进行权衡。当主路由稳定但成本较高时，可以利用这一面板重新调整优先级策略。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig07-model-stats.png}
+  \caption{模型性价比统计面板：按公共模型比较不同上游的顺序、成本和成功率}
+  \label{fig:model-stats}
+\end{figure}
+
+\subsection{LiteLLM 模型接口查看弹窗}
+
+为了避免用户把 \texttt{/models} 接口误认为普通页面，系统将左侧入口改为弹窗说明。图 \ref{fig:litellm-modal} 展示了该弹窗：它清楚给出接口地址、授权头和 \texttt{curl} 示例，并支持复制，便于接口调试、二次开发和与外部工具对接。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth]{fig08-litellm-modal.png}
+  \caption{LiteLLM 模型接口说明弹窗：用于接口调试，不再误导为普通网页入口}
+  \label{fig:litellm-modal}
+\end{figure}
+
+\section{测试设计与测试结果}
+
+\subsection{测试环境}
+
+\begin{itemize}
+  \item 操作系统：Windows 本地环境
+  \item 管理后台：\texttt{127.0.0.1:8091}
+  \item LiteLLM 网关：\texttt{127.0.0.1:4100}
+  \item Open WebUI：\texttt{127.0.0.1:8090}
+\end{itemize}
+
+\subsection{测试方法}
+
+本项目主要采用四类测试方法：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 页面功能测试：检查管理页能否正确渲染、折叠、搜索、置顶和保存。
+  \item 网络联通测试：验证 API 鉴权与 \texttt{/models} 接口是否可用。
+  \item 真实对话测试：通过最小 \texttt{chat/completions} 请求测试模型是否真能对话。
+  \item 系统联调测试：在聊天前台中发起实际对话，验证统一模型入口与 fallback 是否按预期工作。
+\end{enumerate}
+
+最小对话测试使用的提示词如下：
+
+\begin{lstlisting}
+Reply with OK only.
+\end{lstlisting}
+
+\subsection{测试用例设计}
+
+\begin{longtable}{p{3cm}p{4.2cm}p{5.8cm}}
+\toprule
+测试对象 & 测试方式 & 预期结果 \\
+\midrule
+\endhead
+管理首页 & 页面功能测试 & 页面正确渲染，状态卡片和主操作按钮可见 \\
+模型路由 & 页面功能测试 & 支持按模型切换、批量测试、折叠展开和绑定查看 \\
+供应商 API & 测试网络 & 能返回模型列表或明确给出鉴权错误 \\
+模型绑定 & 测试对话 & 最小对话请求成功，说明该绑定可被实际调用 \\
+额度抓取 & 刷新测试 & 能展示最新刷新时间，异常时给出明确错误提示 \\
+接口弹窗 & 页面功能测试 & 可复制地址、授权头和 \texttt{curl} 示例 \\
+\bottomrule
+\end{longtable}
+
+\subsection{测试结果分析}
+
+从当前测试结果来看，可以得到以下结论：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 管理后台的模型视图和供应商视图已经能够承载复杂的多供应商配置。
+  \item 将“测试网络”和“测试对话”拆开后，测试结果更准确，也能明显降低日常排查成本。
+  \item 批量测试网络特别适合先筛查大规模绑定，再对少量关键绑定补做真实对话测试。
+  \item 对于灵算这类依赖站点登录态的供应商，仅有适配脚本还不够，必须结合 token、cookie 或自动登录方案处理认证问题。
+  \item 弹窗式接口说明比直接打开 \texttt{/models} 页面更符合普通用户的认知，也便于后续集成第三方客户端。
+\end{enumerate}
+
+\section{存在问题与后续优化}
+
+\subsection{当前仍存在的问题}
+
+\begin{enumerate}[label=\arabic*.]
+  \item 不同供应商对同一模型的真实命名方式并不统一，仍需持续维护映射关系。
+  \item 某些供应商额度依赖站点登录态，认证信息过期后会影响自动抓取稳定性。
+  \item 复杂 fallback 路由在实际对话失败时，仍需要更细粒度的命中链路说明。
+  \item 前台展示层与后台复杂路由层之间的抽象边界，还可以进一步优化得更清晰。
+\end{enumerate}
+
+\subsection{后续优化方向}
+
+\begin{enumerate}[label=\arabic*.]
+  \item 完善“公共模型名 - 上游真实模型名”映射规则，进一步减少前台重复模型展示。
+  \item 为更多供应商补充额度适配脚本和统一模板，降低新增供应商的接入成本。
+  \item 在调试视图中展示最近一次命中供应商、命中时间与 fallback 轨迹。
+  \item 继续优化聊天前台模型列表，只暴露最终可用的公共模型名。
+\end{enumerate}
+
+\section{总结}
+
+RelayDeck Local 围绕“本地统一管理多供应商大模型接入”这一目标，完成了从需求分析、架构设计、后台实现到测试验证的一整套流程。项目的价值不只在于“能调用模型”，更在于“能把复杂的供应商、多层 fallback、额度监控和调试链路管理起来”。
+
+从本次实现与测试结果看，系统已经具备较完整的本地模型网关管理能力，尤其在按模型路由、按供应商管理、批量测试、额度监控和界面可视化方面形成了较清晰的方案。后续若继续完善自动登录态同步、命中链路调试和前台模型过滤机制，系统将更适合作为一个稳定的本地模型运维平台。
+
+\end{document}

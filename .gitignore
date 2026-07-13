@@ -1,0 +1,49 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Generated provider and routing state
+config/litellm.yaml
+config/relaydeck-state.json
+config/*.bak-*
+config/*.before-rollback-*
+!config/*.example.yaml
+!config/*.example.json
+
+# Runtime data
+data/
+logs/
+run/
+tmp/
+.serena/
+.venv/
+.venv.*/
+**/__pycache__/
+*.py[cod]
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+*.pid
+
+# Generated reports and archives
+submission/
+docs/image/
+docs/*.pdf
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.synctex.gz
+*.zip
+
+# Downloaded or extracted temporary assets
+/*.js
+tmp_*
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

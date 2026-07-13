@@ -1,0 +1,27 @@
+# Copy this file to config/litellm.yaml only when you need a manual gateway
+# configuration. The management page normally generates litellm.yaml.
+
+model_list:
+  - model_name: example-model
+    litellm_params:
+      model: example-model
+      custom_llm_provider: openai
+      api_base: https://api.example.com/v1
+      api_key: os.environ/EXAMPLE_API_KEY
+    model_info:
+      relay_label: example-provider
+      public_model_name: example-model
+      priority: 100
+      enabled: true
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 60
+  fallbacks: []
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
