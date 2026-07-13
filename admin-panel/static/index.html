@@ -223,6 +223,35 @@
       font: inherit;
     }
 
+    .api-modal-dialog {
+      max-height: min(820px, calc(100vh - 40px));
+      overflow-y: auto;
+    }
+
+    .modal-error {
+      min-height: 20px;
+      color: #ff9d9d;
+      font-size: 13px;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding-top: 4px;
+    }
+
+    .api-card[data-new-api-focus="true"] {
+      border-color: rgba(125, 255, 182, 0.85);
+      box-shadow: 0 0 0 3px rgba(125, 255, 182, 0.14), var(--shadow);
+      animation: new-api-focus 2.2s ease-out;
+    }
+
+    @keyframes new-api-focus {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(125, 255, 182, 0.14), var(--shadow); }
+      35% { box-shadow: 0 0 0 8px rgba(125, 255, 182, 0.28), var(--shadow); }
+    }
+
     .kv-block {
       display: grid;
       gap: 8px;
@@ -1447,6 +1476,55 @@
       </div>
     </div>
   </div>
+  <div class="overlay" id="new-api-overlay" data-open="false">
+    <div class="dialog api-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="new-api-title">
+      <div class="dialog-head">
+        <div>
+          <h3 id="new-api-title">新增 API</h3>
+          <div class="helper-text">先填写连接所需的基础信息。价格、额度和登录态仍在 API 卡片中单独管理。</div>
+        </div>
+        <button class="dialog-close" id="btn-close-new-api-overlay" type="button">取消</button>
+      </div>
+      <div class="provider-grid" id="new-api-form">
+        <div class="field">
+          <label for="new-api-label">API 标签</label>
+          <input id="new-api-label" autocomplete="off" placeholder="例如：灵算 GPT 主账号">
+        </div>
+        <div class="field">
+          <label for="new-api-provider">Provider 类型</label>
+          <select id="new-api-provider">
+            <option value="openai">openai</option>
+            <option value="anthropic">anthropic</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label for="new-api-base">API Base</label>
+          <input id="new-api-base" autocomplete="off" placeholder="https://api.example.com/v1">
+          <div class="helper-text" id="new-api-base-hint">OpenAI 兼容类型通常填写接口根地址；如果中转站要求 /v1，请直接写在 API Base 里。</div>
+        </div>
+        <div class="field full">
+          <label for="new-api-key">API Key</label>
+          <input id="new-api-key" type="password" autocomplete="new-password" placeholder="sk-...">
+        </div>
+        <div class="field full">
+          <label for="new-api-key-env">API Key 环境变量</label>
+          <input id="new-api-key-env" autocomplete="off" placeholder="OPENAI_API_KEY">
+          <div class="helper-text">API Key 和环境变量至少填写一个。</div>
+        </div>
+        <div class="field full">
+          <label class="toggle-inline">
+            <span>启用 API</span>
+            <input id="new-api-enabled" type="checkbox" checked>
+          </label>
+        </div>
+      </div>
+      <div class="modal-error" id="new-api-error" role="alert" aria-live="polite"></div>
+      <div class="modal-footer">
+        <button class="secondary" id="btn-cancel-new-api" type="button">取消</button>
+        <button class="primary" id="btn-save-new-api" type="button">保存并创建 API</button>
+      </div>
+    </div>
+  </div>
   <script>
     const state = {
       providers: [],
@@ -1492,6 +1570,8 @@
       modelRoutePinnedOnly: false,
       modelFamilies: [],
       rawModelSearchByRoute: {},
+      newApiModal: null,
+      newApiFocusId: '',
     };
     let routingDraftTimer = null;
 
@@ -1876,6 +1956,17 @@
       state.openApiProfileIds = [...document.querySelectorAll('.api-card[open][data-api-card-id]')]
         .map(node => node.dataset.apiCardId)
         .filter(Boolean);
+      if (state.newApiFocusId) {
+        const focusedProfile = apiProfileById(state.newApiFocusId);
+        if (focusedProfile) {
+          if (!state.openSupplierIds.includes(focusedProfile.supplier_id)) {
+            state.openSupplierIds.push(focusedProfile.supplier_id);
+          }
+          if (!state.openApiProfileIds.includes(focusedProfile.id)) {
+            state.openApiProfileIds.push(focusedProfile.id);
+          }
+        }
+      }
       state.openBindingIds = [...document.querySelectorAll('.binding-card[open][data-binding-card-id]')]
         .map(node => node.dataset.bindingCardId)
         .filter(Boolean);
@@ -2056,6 +2147,157 @@
         routing_strategy: 'simple-shuffle',
         enabled: true,
       };
+    }
+
+    function newApiModalValues() {
+      const draft = state.newApiModal?.draft || {};
+      return {
+        label: String(draft.label || '').trim(),
+        custom_llm_provider: String(draft.custom_llm_provider || 'openai').trim().toLowerCase(),
+        api_base: String(draft.api_base || '').trim(),
+        api_key_value: String(draft.api_key_value || '').trim(),
+        api_key_env: String(draft.api_key_env || '').trim(),
+        enabled: draft.enabled !== false,
+      };
+    }
+
+    function syncNewApiModalDraft() {
+      if (!state.newApiModal) return;
+      state.newApiModal.draft = {
+        label: el('new-api-label')?.value || '',
+        custom_llm_provider: el('new-api-provider')?.value || 'openai',
+        api_base: el('new-api-base')?.value || '',
+        api_key_value: el('new-api-key')?.value || '',
+        api_key_env: el('new-api-key-env')?.value || '',
+        enabled: el('new-api-enabled')?.checked !== false,
+      };
+    }
+
+    function newApiModalIsDirty() {
+      if (!state.newApiModal) return false;
+      syncNewApiModalDraft();
+      return JSON.stringify(newApiModalValues()) !== JSON.stringify(state.newApiModal.initial);
+    }
+
+    function setNewApiModalError(message = '') {
+      const node = el('new-api-error');
+      if (node) node.textContent = message;
+    }
+
+    function updateNewApiBaseHint() {
+      const provider = el('new-api-provider')?.value || 'openai';
+      const node = el('new-api-base-hint');
+      if (node) {
+        node.textContent = provider === 'anthropic'
+          ? 'Anthropic 类型请填写不带 /v1 的根地址，例如 https://api.example.com'
+          : 'OpenAI 兼容类型通常填写接口根地址；如果中转站要求 /v1，请直接写在 API Base 里。';
+      }
+    }
+
+    function showNewApiModal(supplierId = '') {
+      if (!supplierId) {
+        if (!state.suppliers.length) {
+          const supplier = defaultSupplier();
+          state.suppliers.push(supplier);
+          supplierId = supplier.id;
+          state.newApiModal = { supplierId, createdSupplierId: supplier.id };
+        } else {
+          supplierId = state.suppliers[0].id;
+          state.newApiModal = { supplierId, createdSupplierId: '' };
+        }
+      } else {
+        state.newApiModal = { supplierId, createdSupplierId: '' };
+      }
+      const supplier = supplierById(supplierId) || {};
+      const initial = {
+        label: `${supplier.name || 'api'}-main`,
+        custom_llm_provider: supplier.custom_llm_provider || 'openai',
+        api_base: '',
+        api_key_value: '',
+        api_key_env: '',
+        enabled: true,
+      };
+      state.newApiModal.initial = initial;
+      state.newApiModal.draft = { ...initial };
+      el('new-api-label').value = initial.label;
+      el('new-api-provider').value = initial.custom_llm_provider;
+      el('new-api-base').value = '';
+      el('new-api-key').value = '';
+      el('new-api-key-env').value = '';
+      el('new-api-enabled').checked = true;
+      setNewApiModalError('');
+      updateNewApiBaseHint();
+      el('new-api-overlay').dataset.open = 'true';
+      requestAnimationFrame(() => el('new-api-label')?.focus());
+    }
+
+    function discardNewApiDraft() {
+      const createdSupplierId = state.newApiModal?.createdSupplierId;
+      if (createdSupplierId && !state.apiProfiles.some(profile => profile.supplier_id === createdSupplierId)) {
+        state.suppliers = state.suppliers.filter(supplier => supplier.id !== createdSupplierId);
+      }
+      state.newApiModal = null;
+      el('new-api-overlay').dataset.open = 'false';
+      setNewApiModalError('');
+    }
+
+    function closeNewApiModal(force = false) {
+      if (!state.newApiModal) return;
+      if (!force && newApiModalIsDirty() && !window.confirm('当前内容还没有保存，确定取消吗？')) return;
+      discardNewApiDraft();
+    }
+
+    function validateNewApiModal() {
+      syncNewApiModalDraft();
+      const draft = newApiModalValues();
+      if (!draft.label) return '请填写 API 标签。';
+      if (!draft.custom_llm_provider) return '请选择 Provider 类型。';
+      if (!draft.api_base) return '请填写 API Base。';
+      if (!draft.api_key_value && !draft.api_key_env) return 'API Key 和 API Key 环境变量至少填写一个。';
+      return '';
+    }
+
+    function focusNewApiProfile(profileId) {
+      state.newApiFocusId = profileId;
+      renderRouting();
+      requestAnimationFrame(() => {
+        const card = document.querySelector(`[data-api-card-id="${CSS.escape(profileId)}"]`);
+        card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        window.setTimeout(() => {
+          if (state.newApiFocusId === profileId) {
+            state.newApiFocusId = '';
+            renderRouting();
+          }
+        }, 2300);
+      });
+    }
+
+    function saveNewApiFromModal() {
+      if (!state.newApiModal) return;
+      const error = validateNewApiModal();
+      if (error) {
+        setNewApiModalError(error);
+        return;
+      }
+      const saveButton = el('btn-save-new-api');
+      const originalText = saveButton.textContent;
+      saveButton.disabled = true;
+      saveButton.textContent = '正在创建...';
+      setNewApiModalError('');
+      const draft = newApiModalValues();
+      const profile = defaultApiProfile(state.newApiModal.supplierId);
+      Object.assign(profile, draft);
+      state.apiProfiles.push(profile);
+      state.routingViewMode = 'by_supplier';
+      state.openSupplierIds = [...new Set([...state.openSupplierIds, profile.supplier_id])];
+      state.openApiProfileIds = [...new Set([...state.openApiProfileIds, profile.id])];
+      markRoutingDirty();
+      state.newApiModal = null;
+      el('new-api-overlay').dataset.open = 'false';
+      saveButton.disabled = false;
+      saveButton.textContent = originalText;
+      setRoutingSaveStatus('API 已创建，配置已进入自动保存队列', 'ok', true);
+      focusNewApiProfile(profile.id);
     }
 
     function defaultRouteBinding(modelRouteId, apiProfileId = '') {
@@ -3699,11 +3941,7 @@
       }
       if (action === 'add-api') {
         const supplierId = button.dataset.supplierId;
-        const profile = defaultApiProfile(supplierId);
-        state.apiProfiles.push(profile);
-        state.routingViewMode = 'by_supplier';
-        markRoutingDirty();
-        renderAll();
+        showNewApiModal(supplierId);
       }
       if (action === 'remove-supplier') {
         const supplierId = button.dataset.supplierId;
@@ -4644,13 +4882,7 @@
         renderAll();
       };
       el('btn-add-api-profile').onclick = () => {
-        if (!state.suppliers.length) {
-          state.suppliers.push(defaultSupplier());
-        }
-        state.apiProfiles.push(defaultApiProfile(state.suppliers[0].id));
-        state.routingViewMode = 'by_supplier';
-        markRoutingDirty();
-        renderAll();
+        showNewApiModal();
       };
       el('btn-view-model').onclick = () => {
         state.routingViewMode = 'by_model';
@@ -4687,6 +4919,18 @@
       el('btn-copy-litellm-models-url').onclick = () => copyTextToClipboard(currentLiteLlmModelsUrl(), '接口地址已复制');
       el('btn-copy-litellm-models-auth-header').onclick = () => copyTextToClipboard(currentLiteLlmAuthHeader(), '授权头已复制');
       el('btn-copy-litellm-models-curl').onclick = () => copyTextToClipboard(currentLiteLlmCurlCommand(), 'curl 命令已复制');
+      el('btn-close-new-api-overlay').onclick = () => closeNewApiModal();
+      el('btn-cancel-new-api').onclick = () => closeNewApiModal();
+      el('btn-save-new-api').onclick = saveNewApiFromModal;
+      el('new-api-overlay').onclick = event => {
+        if (event.target === el('new-api-overlay')) {
+          setNewApiModalError('请使用“取消”关闭窗口，避免误丢弃已填写内容。');
+        }
+      };
+      el('new-api-provider').onchange = updateNewApiBaseHint;
+      ['new-api-label', 'new-api-base', 'new-api-key', 'new-api-key-env'].forEach(id => {
+        el(id)?.addEventListener('input', () => setNewApiModalError(''));
+      });
       const modelFamilyInput = el('model-family-name');
       const addModelFamily = () => {
         const value = modelFamilyInput?.value || '';
@@ -4732,6 +4976,10 @@
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape' && el('litellm-models-overlay')?.dataset.open === 'true') {
         hideLiteLlmModelsInfoDialog();
+      }
+      if (event.key === 'Escape' && el('new-api-overlay')?.dataset.open === 'true') {
+        event.preventDefault();
+        closeNewApiModal();
       }
     });
     document.addEventListener('visibilitychange', () => {
@@ -5006,7 +5254,7 @@
         </div>
       `;
       return `
-        <details class="api-card" data-api-card-id="${escapeHtml(profile.id)}" data-selected="${selected ? 'true' : 'false'}" ${selected || state.openApiProfileIds.includes(profile.id) ? 'open' : ''}>
+        <details class="api-card" data-api-card-id="${escapeHtml(profile.id)}" data-new-api-focus="${state.newApiFocusId === profile.id ? 'true' : 'false'}" data-selected="${selected ? 'true' : 'false'}" ${selected || state.openApiProfileIds.includes(profile.id) ? 'open' : ''}>
           <summary class="provider-head">
             <div class="provider-title">
               <strong>${escapeHtml(profile.label || '未命名 API')}</strong>
