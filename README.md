@@ -1,14 +1,58 @@
-# RelayDeck Local
+# Cost-Aware LLM Multi-Provider Router
 
-RelayDeck Local is a local, self-hosted model routing stack. It combines a
-LiteLLM gateway, an Open WebUI frontend, and a management panel for provider
-accounts, model bindings, fallback routes, quota adapters, and usage checks.
+A local LLM gateway and control plane for managing multiple provider APIs and
+accounts. It routes requests by model availability, health, quota, priority,
+latency, and cost, then automatically fails over to another upstream when a
+model or account becomes unavailable. Codex, Open WebUI, and other clients can
+keep one stable API endpoint without manual configuration changes.
+
+## What it provides
+
+- **Multi-provider management**: keep API accounts, credentials, quotas, and
+  upstream model names organized by supplier.
+- **Public model routing**: expose one stable model name while maintaining
+  multiple upstream bindings behind it.
+- **Automatic failover**: retry and switch to an enabled backup binding when
+  the current upstream fails, is unavailable, or is disabled.
+- **Cost and usage tracking**: record usage and configured pricing so provider
+  cost and cost-performance can be compared using real request data.
+- **Model organization**: group public models into model families and map
+  provider-specific names to a consistent public model.
+- **Health checks**: separate low-cost network checks from real conversation
+  tests, with per-provider and per-binding status.
+- **Quota adapters**: extend balance and quota collection for providers that
+  do not expose a standard billing API.
+
+```mermaid
+flowchart LR
+    C[Codex / Open WebUI / API client] --> G[LiteLLM gateway]
+    G --> R[RelayDeck routing and failover]
+    R --> P1[Provider API A]
+    R --> P2[Provider API B]
+    R --> P3[Provider API C]
+    R --> D[Usage, quota, cost and health data]
+```
 
 ## Components
 
 - LiteLLM gateway: `http://127.0.0.1:4100`
 - Open WebUI frontend: `http://127.0.0.1:8090`
 - RelayDeck management panel: `http://127.0.0.1:8091`
+
+## Typical client configuration
+
+Clients point to the local gateway rather than to an individual upstream:
+
+```text
+Base URL: http://127.0.0.1:4100/v1
+API key:  LITELLM_MASTER_KEY
+Model:    a public model name configured in the management panel
+```
+
+For example, Codex can continue using one public model such as `gpt-5.4`.
+RelayDeck decides which enabled provider binding handles the request. When the
+first binding fails, the fallback order is applied without changing the Codex
+configuration.
 
 ## Requirements
 
@@ -80,9 +124,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-llm-stack.ps1
 ```
 
 Open the management panel at `http://127.0.0.1:8091`. Configure a supplier,
-API profile, public model, and upstream binding there. Use network tests for
-low-cost connectivity checks and conversation tests only when a real request
-is needed.
+API profile, public model, upstream binding, priority, and fallback order there.
+Use network tests for low-cost connectivity checks and conversation tests only
+when a real request is needed.
+
+For reliable automatic switching, make sure each public model has at least two
+enabled upstream bindings, with distinct priorities and valid provider model
+names. Cost-aware routing depends on configured pricing and recorded usage;
+missing pricing data is shown as unavailable rather than guessed.
 
 ## Provider adapters
 
@@ -114,6 +163,6 @@ and create a replacement before making the repository public.
 
 ## License
 
-Choose and add a license before publishing to GitHub. If this is an academic
-or private project, keep the repository private until the ownership and reuse
-terms are clear.
+Add a license before publishing if you want others to reuse the project. MIT is
+appropriate for a permissive open-source release; otherwise keep the repository
+private until the ownership and reuse terms are clear.
