@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "id": "78code-newapi",
+  "capabilities": ["fetch_quota"],
+  "credential_permissions": ["auth_token", "session_cookie", "api_key_value"]
+}

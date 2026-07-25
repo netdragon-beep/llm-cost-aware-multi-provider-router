@@ -13,6 +13,10 @@ config/*.before-rollback-*
 
 # Runtime data
 data/
+# Windows DPAPI CurrentUser encrypted supplier credentials
+data/credential-vault.json
+# Dedicated Playwright profiles may contain supplier and Google session state.
+data/browser-sessions/
 logs/
 run/
 tmp/

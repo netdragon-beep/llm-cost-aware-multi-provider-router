@@ -36,6 +36,7 @@ flowchart LR
 ## Components
 
 - LiteLLM gateway: `http://127.0.0.1:4100`
+- Claude Code gateway: `http://127.0.0.1:4101`
 - Open WebUI frontend: `http://127.0.0.1:8090`
 - RelayDeck management panel: `http://127.0.0.1:8091`
 
@@ -53,6 +54,30 @@ For example, Codex can continue using one public model such as `gpt-5.4`.
 RelayDeck decides which enabled provider binding handles the request. When the
 first binding fails, the fallback order is applied without changing the Codex
 configuration.
+
+### Claude Desktop model discovery
+
+The management panel can enable `Claude Desktop 自动发现` under the model
+routing tools. When enabled, RelayDeck adds Anthropic-compatible discovery
+metadata to every model published to the gateway. This does not rename models
+or change the OpenAI-compatible `/v1/chat/completions` route used by Codex.
+
+Claude Desktop continues to use the same gateway through the Anthropic
+`/v1/messages` endpoint. Models that do not support the required streaming or
+tool-calling behavior may still fail at inference time, so enable this option
+only after validating those capabilities for the selected upstreams.
+
+### Dedicated Claude Code Gateway
+
+RelayDeck also runs a dedicated gateway on `http://127.0.0.1:4101`. It exposes
+only `claude-relaydeck-*` aliases, one for every public model on the native
+gateway. Native and Claude aliases share upstream bindings, priority, and
+failover chains, so Codex remains on port `4100` without seeing Claude aliases.
+
+Open `客户端接入配置` in the management panel and choose `配置 Claude Code 自动发现`.
+RelayDeck backs up and merges `%USERPROFILE%\.claude\settings.json`, points
+Claude Code at port `4101`, and enables model discovery. Restart Claude Code,
+then use `/model` to select aliases for the main session or subagents.
 
 ## Requirements
 
@@ -140,6 +165,36 @@ Provider-specific quota scripts live in `quota-adapters/`. Start with
 `docs/provider-quota-adapter-guide.md` when adding a new provider. Adapter
 scripts must never contain credentials; read them from environment variables
 or the managed profile passed by the application.
+
+## Isolated browser SSO
+
+Suppliers that use Google SSO instead of a site password can establish an
+isolated RelayDeck browser session. The first built-in browser adapter targets
+`lingsuan.top`:
+
+1. Install the browser runtime once:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-browser-runtime.ps1
+   ```
+
+2. Open the supplier view, enable shared quota, and select `灵算网站后台`.
+3. Click `建立浏览器登录` and complete Google sign-in in the separate Chromium
+   window. RelayDeck does not read or store the Google password.
+4. RelayDeck captures only the LingSuan authorization result and encrypts the
+   supplier Token/Cookie with Windows DPAPI CurrentUser.
+
+The dedicated browser profile is stored under `data/browser-sessions/` and is
+excluded from Git. Chromium protects its own browser cookies for the current
+Windows account; RelayDeck does not open the user's normal Edge or Chrome
+profile. A browser process is used only during authorization or renewal and
+may consume several hundred MB of memory while running.
+
+When a LingSuan quota request returns an authentication failure, RelayDeck
+attempts one silent renewal and retries the quota request once. Google account
+selection, CAPTCHA, two-factor authentication, or revoked sessions cannot be
+bypassed: the supplier card changes to `需要重新授权` and the user must complete
+the visible login flow again.
 
 ## Repository safety
 

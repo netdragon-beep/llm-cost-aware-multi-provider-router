@@ -216,7 +216,13 @@ def main():
         "balance_total": total,
         "balance_used": used,
         "balance_remaining": remaining,
+        # Return one item per independent quota source when the provider has both.
+        "quota_items": [],
         "message": message,
+        # Populate this list only after implementing the provider's real price source.
+        "pricing_catalog": [],
+        # RelayDeck encrypts accepted updates after checking the companion manifest.
+        "credential_updates": {},
         "raw_summary": raw_summary,
     }, ensure_ascii=False))
 

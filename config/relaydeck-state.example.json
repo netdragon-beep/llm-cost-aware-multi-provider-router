@@ -22,6 +22,10 @@
     "fallbacks": []
   },
   "litellm_settings": {
-    "drop_params": true
+    "drop_params": true,
+    "relaydeck_claude_discovery": {
+      "claude_desktop_discovery_enabled": false,
+      "claude_desktop_default_tier": "sonnet"
+    }
   }
 }

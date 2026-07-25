@@ -1,57 +1,83 @@
-Quota adapter scripts
+# Quota adapters
 
-Detailed guide
-- Full guide for writing a new supplier adapter:
-  [docs/provider-quota-adapter-guide.md](../docs/provider-quota-adapter-guide.md)
+RelayDeck binds one quota adapter to a supplier automatically. Users do not
+select a quota method in the control panel.
 
-Purpose
-- Put custom quota-fetch scripts here when a provider does not expose balance data through a normal API.
-- The admin panel can call these scripts and show the returned balance in the usage/quota dashboard.
+Built-in bindings:
 
-How to use
-1. Create a script in this directory. Supported file types:
-   - `.py`
-   - `.ps1`
-   - `.cmd`
-   - `.bat`
-2. In the admin panel, open an API profile and set:
-   - `quota.adapter = custom-script`
-   - `quota.script_name = your_script.py`
-   - optional: `quota.script_timeout_sec = 60`
-3. Click `刷新额度`.
+- `lingsuan.top` -> `lingsuan-web`
+- `auto-code.net` -> `autocode-web`
 
-Input contract
-- The script receives one JSON object from `stdin`.
-- The same JSON is also available in env var `RELAYDECK_QUOTA_CONTEXT`.
+Both built-in website adapters use the same isolated browser SSO contract.
+The user signs in in a supplier-specific browser profile; RelayDeck captures
+only successful same-origin session signals, encrypts the resulting token or
+cookie with Windows DPAPI CurrentUser, and reuses it for quota refresh. The
+adapter-specific quota script still owns the supplier's balance fields and
+endpoint parsing.
 
-Input shape
+For another supplier, put a script and a companion manifest in this directory.
+Supported script types are `.py`, `.ps1`, `.cmd`, and `.bat`.
+
+## Automatic binding
+
+Name the files with the same stem:
+
+```text
+adapter_example.py
+adapter_example.adapter.json
+```
+
+Declare the supplier domains in the manifest:
+
 ```json
 {
-  "profile": {
-    "id": "api_xxx",
-    "label": "LingSuan",
-    "supplier_id": "supplier_xxx",
-    "api_base": "https://example.com/v1",
-    "api_key_env": "MY_API_KEY",
-    "api_key_value": "<provider-api-key>",
-    "custom_llm_provider": "openai",
-    "quota": {
-      "adapter": "custom-script",
-      "script_name": "example_lingsuan.py",
-      "auth_token": "optional bearer token"
-    }
-  },
-  "window": {
-    "start_at": "2026-06-01T00:00:00+08:00",
-    "end_at": "2026-06-26T09:00:00+08:00"
+  "version": 1,
+  "id": "example-supplier",
+  "display_name": "Example supplier quota",
+  "supported_hosts": ["example.com", "api.example.com"],
+  "capabilities": ["fetch_quota"],
+  "credential_permissions": ["auth_token", "session_cookie"]
+}
+```
+
+To enable the shared browser SSO flow for a custom website adapter, add a
+`browser_sso` object to the companion manifest:
+
+```json
+{
+  "browser_sso": {
+    "portal_hosts": ["example.com"],
+    "login_path": "/dashboard",
+    "auth_me_path": "/api/v1/auth/me",
+    "cookie_domains": ["example.com"],
+    "google_rejection_check": true
   }
 }
 ```
 
-Output contract
-- Print exactly one JSON object to `stdout`.
+`portal_hosts` and `cookie_domains` are allowlists. The browser driver never
+stores credentials from another domain. `auth_me_path` must be a successful
+same-origin endpoint that proves the supplier session is authenticated.
+Suppliers with a different login or session contract should implement the
+same manifest fields rather than adding a new control-panel login method.
 
-Required output fields
+`supported_hosts` is required for automatic binding. A host also matches its
+subdomains, so `example.com` covers `api.example.com`. Built-in adapters take
+precedence over scripts.
+
+The bundled example scripts intentionally have no `supported_hosts` entry and
+therefore cannot bind to a real supplier accidentally. Copy
+`adapter_template.py` and `adapter_template.adapter.json`, then replace the
+placeholder host.
+
+## Runtime contract
+
+RelayDeck sends one JSON object through `stdin`. The `profile.quota` object
+already contains the automatically resolved `adapter` and `script_name`.
+Credentials are included only when listed in `credential_permissions`.
+
+The script must print exactly one JSON object to `stdout`:
+
 ```json
 {
   "status": "ok",
@@ -61,22 +87,50 @@ Required output fields
   "balance_used": 37.5,
   "balance_remaining": 62.5,
   "message": "",
-  "raw_summary": {
-    "note": "optional debug info"
-  }
+  "credential_updates": {},
+  "raw_summary": {}
 }
 ```
 
-Status values
-- `ok`
-- `unsupported`
-- `error`
+Valid status values are `ok`, `unsupported`, `error`, `auth_required`, and
+`partial`.
 
-Notes
-- `raw_summary` is optional but recommended for debugging.
-- If the target site requires browser automation, the script can do that itself and only return the final JSON payload.
-- Keep secrets out of source files when possible; prefer values already stored in the profile quota config or environment.
+## Security
 
-Examples
-- `example_lingsuan.py` shows a simple site-specific adapter skeleton.
-- `adapter_template.py` is the recommended copy-and-edit starting point for a new supplier.
+- Supplier credentials are encrypted with Windows DPAPI CurrentUser.
+- Scripts receive only credentials explicitly granted by their manifest.
+- Never print tokens, cookies, passwords, or API keys to stdout, stderr,
+  `message`, or `raw_summary`.
+- `credential_updates` may contain only granted fields.
+
+See [the full adapter guide](../docs/provider-quota-adapter-guide.md).
+
+## Multiple quota sources
+
+When a supplier exposes both a pay-as-you-go wallet and a subscription, return
+both sources in `quota_items`. Do not merge them into one total:
+
+```json
+{
+  "quota_items": [
+    {
+      "id": "wallet",
+      "type": "balance",
+      "label": "Pay-as-you-go balance",
+      "remaining": 6.9
+    },
+    {
+      "id": "monthly-plan",
+      "type": "subscription",
+      "label": "Monthly plan",
+      "total": 1000,
+      "used": 320,
+      "remaining": 680,
+      "period_end": "2026-07-31"
+    }
+  ]
+}
+```
+
+RelayDeck normalizes each item independently and renders one progress bar per
+source. The legacy scalar fields remain supported for adapters with one source.

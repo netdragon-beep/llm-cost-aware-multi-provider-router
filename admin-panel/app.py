@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -23,11 +24,31 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from cost_attribution import (
+    attribute_supplier_costs,
+    subscription_amortization,
+    subscription_usage_summary,
+    weighted_topup_basis,
+)
+from credential_vault import CredentialVault, get_credential_vault
+from supplier_sso import (
+    BUILTIN_BROWSER_SSO_ADAPTERS,
+    SsoTaskActiveError,
+    SupplierSsoManager,
+    browser_runtime_status,
+    browser_sso_adapter_for_supplier,
+    run_supplier_browser_sso,
+)
+from relaydeck_litellm_discovery import (
+    claude_discovery_metadata,
+    normalize_claude_discovery_settings,
+)
 from usage_quota_store import get_usage_quota_store, init_usage_quota_store
 
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config" / "litellm.yaml"
+CLAUDE_CONFIG_PATH = ROOT / "config" / "litellm-claude.yaml"
 STATE_PATH = ROOT / "config" / "relaydeck-state.json"
 ENV_PATH = ROOT / ".env"
 SCRIPTS_DIR = ROOT / "scripts"
@@ -57,7 +78,31 @@ ENV_VAR_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 KNOWN_PORTAL_HOST_ADAPTERS = {
     "lingsuan.top": "lingsuan-web",
     "auto-code.net": "autocode-web",
+    "vip.auto-code.net": "autocode-web",
 }
+BUILTIN_QUOTA_ADAPTER_LABELS = {
+    "lingsuan-web": "灵算网站额度",
+    "autocode-web": "AutoCode 网站额度",
+}
+PERSISTED_SUPPLIER_QUOTA_FIELDS = {"enabled", "currency", "portal_base", "pricing_automation", "billing_mode"}
+BILLING_MODES = {"balance", "subscription", "mixed"}
+PRICING_AUTOMATION_MODES = {"manual", "detect-confirm", "auto-apply"}
+SENSITIVE_QUOTA_CREDENTIAL_FIELDS = {
+    "auth_token",
+    "login_email",
+    "login_password",
+    "refresh_token",
+    "session_cookie",
+    "totp_secret",
+}
+ADAPTER_CREDENTIAL_PERMISSION_FIELDS = {*SENSITIVE_QUOTA_CREDENTIAL_FIELDS, "api_key_value"}
+SENSITIVE_KEY_FRAGMENTS = ("authorization", "cookie", "password", "secret", "token", "api_key", "apikey")
+CLAUDE_DISCOVERY_SETTINGS_KEY = "relaydeck_claude_discovery"
+
+
+def claude_discovery_settings(litellm_settings: dict[str, Any] | None) -> dict[str, Any]:
+    source = ensure_mapping((litellm_settings or {}).get(CLAUDE_DISCOVERY_SETTINGS_KEY))
+    return normalize_claude_discovery_settings(source)
 
 
 def parse_env_lines() -> list[tuple[str | None, str]]:
@@ -97,12 +142,17 @@ def list_quota_adapter_scripts() -> list[dict[str, Any]]:
             continue
         if path.suffix.lower() not in {".py", ".ps1", ".cmd", ".bat"}:
             continue
+        try:
+            manifest = load_quota_adapter_manifest(path)
+        except Exception as exc:
+            manifest = {"version": 1, "credential_permissions": [], "error": str(exc)}
         items.append(
             {
                 "name": path.name,
                 "stem": path.stem,
                 "path": str(path),
                 "type": path.suffix.lower().lstrip("."),
+                "manifest": manifest,
             }
         )
     return items
@@ -136,6 +186,21 @@ def resolve_quota_adapter_script(script_name: str | None) -> Path | None:
     return resolved
 
 
+def load_quota_adapter_manifest(script_path: Path) -> dict[str, Any]:
+    manifest_path = script_path.with_suffix(".adapter.json")
+    if not manifest_path.exists():
+        return {"version": 1, "credential_permissions": []}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Invalid adapter manifest: {manifest_path.name}")
+    permissions = [
+        str(item).strip()
+        for item in ensure_list(manifest.get("credential_permissions"))
+        if str(item).strip() in ADAPTER_CREDENTIAL_PERMISSION_FIELDS
+    ]
+    return {**manifest, "version": int(manifest.get("version") or 1), "credential_permissions": permissions}
+
+
 def write_env_file(env_map: dict[str, str]) -> None:
     remaining = dict(env_map)
     output: list[str] = []
@@ -159,18 +224,69 @@ def load_config() -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def backup_file(path: Path) -> None:
+def backup_file(path: Path) -> Path | None:
     if not path.exists():
-        return
+        return None
     ts = time.strftime("%Y%m%d-%H%M%S")
     backup_path = path.with_suffix(path.suffix + f".bak-{ts}")
     backup_path.write_bytes(path.read_bytes())
+    return backup_path
 
 
 def save_config(config: dict[str, Any]) -> None:
     backup_file(CONFIG_PATH)
     with CONFIG_PATH.open("w", encoding="utf-8") as f:
         yaml.safe_dump(config, f, sort_keys=False, allow_unicode=True)
+
+
+def save_gateway_configs(configs: dict[str, dict[str, Any]]) -> None:
+    """Persist the native and Claude Code gateway views together."""
+    save_config(configs["openai"])
+    backup_file(CLAUDE_CONFIG_PATH)
+    with CLAUDE_CONFIG_PATH.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(configs["claude"], f, sort_keys=False, allow_unicode=True)
+
+
+def configure_claude_code_settings(
+    settings_path: Path,
+    base_url: str,
+    auth_token: str,
+) -> dict[str, str]:
+    """Merge RelayDeck discovery settings without replacing user preferences."""
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            loaded = json.loads(settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Claude Code settings.json is not valid JSON") from exc
+        if not isinstance(loaded, dict):
+            raise ValueError("Claude Code settings.json must contain a JSON object")
+        settings = loaded
+
+    current_env = settings.get("env")
+    if current_env is None:
+        current_env = {}
+    if not isinstance(current_env, dict):
+        raise ValueError("Claude Code settings env must be a JSON object")
+
+    backup_path = backup_file(settings_path)
+    current_env.update(
+        {
+            "ANTHROPIC_BASE_URL": base_url.rstrip("/"),
+            "ANTHROPIC_AUTH_TOKEN": auth_token,
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+        }
+    )
+    settings["env"] = current_env
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "settings_path": str(settings_path),
+        "backup_path": str(backup_path) if backup_path else "",
+    }
 
 
 def read_env_var_name(api_key_value: str | None) -> str:
@@ -265,8 +381,359 @@ def normalize_provider_name(custom_llm_provider: str | None) -> str:
     return (custom_llm_provider or "openai").strip().lower() or "openai"
 
 
-def quota_has_manual_values(quota: dict[str, Any]) -> bool:
-    return any(quota.get(key) not in (None, "") for key in ("limit", "current_balance", "used_amount"))
+def supplier_host_matches(platform_key: str, supported_host: str) -> bool:
+    key = str(platform_key or "").strip().lower().lstrip(".")
+    host = str(supported_host or "").strip().lower().lstrip(".")
+    return bool(key and host and (key == host or key.endswith(f".{host}")))
+
+
+def resolve_supplier_quota_adapter(
+    platform_key: str,
+    *,
+    adapter_scripts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    key = str(platform_key or "").strip().lower()
+    for known_host, adapter in KNOWN_PORTAL_HOST_ADAPTERS.items():
+        if supplier_host_matches(key, known_host):
+            return {
+                "supported": True,
+                "adapter": adapter,
+                "adapter_id": adapter,
+                "label": BUILTIN_QUOTA_ADAPTER_LABELS.get(adapter, adapter),
+                "source": "builtin",
+                "script_name": "",
+            }
+
+    scripts = list_quota_adapter_scripts() if adapter_scripts is None else adapter_scripts
+    for item in scripts:
+        manifest = ensure_mapping(item.get("manifest"))
+        supported_hosts = [str(host).strip().lower() for host in ensure_list(manifest.get("supported_hosts"))]
+        if not any(supplier_host_matches(key, host) for host in supported_hosts):
+            continue
+        script_name = str(item.get("name") or "").strip()
+        return {
+            "supported": True,
+            "adapter": "custom-script",
+            "adapter_id": str(manifest.get("id") or item.get("stem") or script_name),
+            "label": str(manifest.get("display_name") or manifest.get("name") or item.get("stem") or script_name),
+            "source": "script",
+            "script_name": script_name,
+        }
+
+    return {
+        "supported": False,
+        "adapter": "unsupported",
+        "adapter_id": "",
+        "label": "暂未安装额度适配器",
+        "source": "none",
+        "script_name": "",
+    }
+
+
+def persisted_supplier_quota_config(quota: dict[str, Any] | None) -> dict[str, Any]:
+    public_config, _ = split_quota_credentials(quota)
+    config = {
+        key: value
+        for key, value in public_config.items()
+        if key in PERSISTED_SUPPLIER_QUOTA_FIELDS and value not in (None, "")
+    }
+    if "pricing_automation" in config:
+        config["pricing_automation"] = normalize_pricing_automation(config["pricing_automation"])
+    return config
+
+
+def resolved_supplier_quota_config(platform_key: str, quota: dict[str, Any] | None) -> dict[str, Any]:
+    config = persisted_supplier_quota_config(quota)
+    config.setdefault("pricing_automation", "detect-confirm")
+    config.setdefault("billing_mode", "balance")
+    resolution = resolve_supplier_quota_adapter(platform_key)
+    resolved = {
+        **config,
+        "adapter": resolution["adapter"],
+        "adapter_resolution": resolution,
+    }
+    if resolution.get("script_name"):
+        resolved["script_name"] = resolution["script_name"]
+    return resolved
+
+
+def normalize_pricing_automation(value: Any) -> str:
+    mode = str(value or "detect-confirm").strip().lower()
+    return mode if mode in PRICING_AUTOMATION_MODES else "detect-confirm"
+
+
+def normalize_billing_mode(value: Any) -> str:
+    mode = str(value or "balance").strip().lower()
+    return mode if mode in BILLING_MODES else "balance"
+
+
+def apply_billing_mode_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    previous_snapshot: dict[str, Any] | None = None,
+    billing_mode: str = "balance",
+) -> dict[str, Any]:
+    normalized = dict(snapshot or {})
+    mode = normalize_billing_mode(billing_mode)
+    normalized["billing_mode"] = mode
+
+    total = numeric_value(normalized.get("balance_total"))
+    used = numeric_value(normalized.get("balance_used"))
+    remaining = numeric_value(normalized.get("balance_remaining"))
+    if mode == "subscription":
+        if used is None and total is not None and remaining is not None:
+            used = max(0.0, total - remaining)
+        if remaining is None and total is not None and used is not None:
+            remaining = max(0.0, total - used)
+        normalized["balance_total"] = total
+        normalized["balance_used"] = used
+        normalized["balance_remaining"] = remaining
+        return normalized
+
+    if remaining is None:
+        return normalized
+    previous = previous_snapshot or {}
+    previous_remaining = numeric_value(previous.get("balance_remaining", previous.get("remaining")))
+    baseline = previous_remaining
+    total = remaining if baseline is None or remaining > baseline else baseline
+    normalized["balance_total"] = total
+    normalized["balance_remaining"] = remaining
+    normalized["balance_used"] = max(0.0, total - remaining)
+    return normalized
+
+
+def parse_quota_items(value: Any) -> list[dict[str, Any]]:
+    raw = value
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    return [dict(item) for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def snapshot_quota_items(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return quota sources from a snapshot, keeping legacy scalar snapshots usable."""
+    current = dict(snapshot or {})
+    items = parse_quota_items(current.get("quota_items"))
+    if items:
+        if any(
+            item.get(key) not in (None, "")
+            for item in items
+            for key in ("balance_total", "balance_used", "balance_remaining")
+        ):
+            return items
+        items = []
+    if not any(current.get(key) not in (None, "") for key in ("balance_total", "balance_used", "balance_remaining")):
+        return []
+    billing_mode = normalize_billing_mode(current.get("billing_mode"))
+    item_type = "subscription" if billing_mode == "subscription" else "balance"
+    return [{
+        "id": item_type,
+        "type": item_type,
+        "billing_mode": item_type,
+        "label": "套餐额度" if item_type == "subscription" else "按量余额",
+        "currency": current.get("currency") or "CNY",
+        "balance_total": current.get("balance_total"),
+        "balance_used": current.get("balance_used"),
+        "balance_remaining": current.get("balance_remaining"),
+        "period_start": current.get("period_start") or "",
+        "period_end": current.get("period_end") or "",
+        "status": current.get("status") or "unknown",
+        "source": current.get("adapter") or "snapshot",
+    }]
+
+
+def normalize_quota_items(
+    raw_items: Any,
+    *,
+    fallback_snapshot: dict[str, Any] | None = None,
+    previous_snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    fallback = dict(fallback_snapshot or {})
+    source_items = parse_quota_items(raw_items)
+    if not source_items:
+        source_items = [
+            {
+                "id": "balance" if normalize_billing_mode(fallback.get("billing_mode")) == "balance" else "subscription",
+                "type": normalize_billing_mode(fallback.get("billing_mode")),
+                "label": "按量余额" if normalize_billing_mode(fallback.get("billing_mode")) == "balance" else "套餐额度",
+                **fallback,
+            }
+        ]
+
+    previous_items = {
+        str(item.get("id") or "").strip(): item
+        for item in parse_quota_items((previous_snapshot or {}).get("quota_items"))
+        if str(item.get("id") or "").strip()
+    }
+    normalized_items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, raw_item in enumerate(source_items):
+        raw_type = str(raw_item.get("type") or raw_item.get("kind") or raw_item.get("billing_mode") or "balance").strip().lower()
+        item_type = "subscription" if raw_type in {"subscription", "package", "plan", "套餐额度"} else "balance"
+        item_id = str(raw_item.get("id") or raw_item.get("name") or f"{item_type}-{index + 1}").strip() or f"{item_type}-{index + 1}"
+        if item_id in seen_ids:
+            item_id = f"{item_id}-{index + 1}"
+        seen_ids.add(item_id)
+        item = {
+            "id": item_id,
+            "label": str(raw_item.get("label") or raw_item.get("name") or ("套餐额度" if item_type == "subscription" else "按量余额")),
+            "type": item_type,
+            "billing_mode": item_type,
+            "currency": str(raw_item.get("currency") or fallback.get("currency") or "CNY"),
+            "balance_total": raw_item.get("balance_total", raw_item.get("total")),
+            "balance_used": raw_item.get("balance_used", raw_item.get("used")),
+            "balance_remaining": raw_item.get("balance_remaining", raw_item.get("remaining")),
+            "period_start": str(raw_item.get("period_start") or raw_item.get("start_time") or ""),
+            "period_end": str(raw_item.get("period_end") or raw_item.get("end_time") or raw_item.get("expires_at") or ""),
+            "status": str(raw_item.get("status") or "ok"),
+            "source": str(raw_item.get("source") or "supplier-adapter"),
+        }
+        adjusted = apply_billing_mode_snapshot(
+            item,
+            previous_snapshot=previous_items.get(item_id),
+            billing_mode=item_type,
+        )
+        normalized_items.append(adjusted)
+    return normalized_items
+
+
+def normalize_pricing_observation(
+    platform_key: str,
+    profile: dict[str, Any],
+    observation: dict[str, Any],
+    *,
+    source: str,
+) -> dict[str, Any]:
+    raw = ensure_mapping(observation)
+    multiplier = float(raw.get("multiplier") if raw.get("multiplier") not in (None, "") else 1)
+    if multiplier < 0:
+        raise ValueError("pricing multiplier cannot be negative")
+
+    raw_input = raw.get("input_per_1m")
+    raw_output = raw.get("output_per_1m")
+    base_input = raw.get("base_input_per_1m")
+    base_output = raw.get("base_output_per_1m")
+    if base_input in (None, ""):
+        base_input = float(raw_input or 0) / multiplier if multiplier else float(raw_input or 0)
+    if base_output in (None, ""):
+        base_output = float(raw_output or 0) / multiplier if multiplier else float(raw_output or 0)
+    base_input = float(base_input or 0)
+    base_output = float(base_output or 0)
+    input_per_1m = float(raw_input) if raw_input not in (None, "") else base_input * multiplier
+    output_per_1m = float(raw_output) if raw_output not in (None, "") else base_output * multiplier
+    if min(base_input, base_output, input_per_1m, output_per_1m) < 0:
+        raise ValueError("pricing values cannot be negative")
+
+    api_profile_id = str(raw.get("api_profile_id") or profile.get("id") or "").strip()
+    upstream_model = str(raw.get("upstream_model") or "*").strip() or "*"
+    currency = str(raw.get("currency") or "USD").strip().upper() or "USD"
+    fingerprint_payload = {
+        "api_profile_id": api_profile_id,
+        "upstream_model": upstream_model,
+        "base_input_per_1m": round(base_input, 12),
+        "base_output_per_1m": round(base_output, 12),
+        "multiplier": round(multiplier, 12),
+        "input_per_1m": round(input_per_1m, 12),
+        "output_per_1m": round(output_per_1m, 12),
+        "currency": currency,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "platform_key": str(platform_key or "").strip().lower(),
+        "api_profile_id": api_profile_id,
+        "upstream_model": upstream_model,
+        "group_name": str(raw.get("group_name") or "").strip(),
+        "base_input_per_1m": base_input,
+        "base_output_per_1m": base_output,
+        "multiplier": multiplier,
+        "input_per_1m": input_per_1m,
+        "output_per_1m": output_per_1m,
+        "currency": currency,
+        "effective_from": str(raw.get("effective_from") or now_iso_local()).strip(),
+        "status": "candidate",
+        "source": str(source or "adapter").strip().lower(),
+        "confidence": str(raw.get("confidence") or ("exact" if raw.get("effective_from") else "inferred")).strip().lower(),
+        "note": str(raw.get("note") or "").strip(),
+        "fingerprint": fingerprint,
+    }
+
+
+def pricing_change_ratio(current: dict[str, Any] | None, observed: dict[str, Any]) -> float:
+    if not current:
+        return 0.0
+    ratios: list[float] = []
+    for key in ("input_per_1m", "output_per_1m"):
+        before = float(current.get(key) or 0)
+        after = float(observed.get(key) or 0)
+        if before == after:
+            ratios.append(0.0)
+        elif before <= 0:
+            ratios.append(float("inf"))
+        else:
+            ratios.append(abs(after - before) / before)
+    return max(ratios or [0.0])
+
+
+def process_pricing_observations(
+    platform_key: str,
+    profile: dict[str, Any],
+    observations: list[dict[str, Any]],
+    *,
+    automation_mode: str,
+    store: Any | None = None,
+) -> dict[str, Any]:
+    mode = normalize_pricing_automation(automation_mode)
+    pricing_store = store or get_usage_quota_store()
+    summary = {
+        "mode": mode,
+        "observed": 0,
+        "unchanged": 0,
+        "ignored": 0,
+        "candidates": 0,
+        "applied": 0,
+        "requires_confirmation": 0,
+        "items": [],
+    }
+    for raw in observations:
+        normalized = normalize_pricing_observation(platform_key, profile, raw, source="adapter")
+        summary["observed"] += 1
+        current = pricing_store.get_active_pricing_version(
+            normalized["api_profile_id"], normalized["upstream_model"]
+        )
+        if current and current.get("fingerprint") == normalized["fingerprint"]:
+            summary["unchanged"] += 1
+            continue
+        if mode == "manual":
+            summary["ignored"] += 1
+            continue
+        candidate = pricing_store.observe_pricing_candidate(normalized)
+        summary["candidates"] += 1
+        summary["items"].append(candidate)
+        if mode != "auto-apply" or int(candidate.get("observation_count") or 0) < 2:
+            continue
+        if pricing_change_ratio(current, candidate) > 0.5:
+            summary["requires_confirmation"] += 1
+            continue
+        pricing_store.activate_pricing_version(candidate["id"])
+        summary["applied"] += 1
+    return summary
+
+
+def pricing_catalog_from_adapter_payload(
+    payload: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    capabilities = {
+        str(item or "").strip().lower()
+        for item in ensure_list(ensure_mapping(manifest).get("capabilities"))
+    }
+    if "fetch_pricing" not in capabilities:
+        return []
+    return [dict(item) for item in ensure_list(payload.get("pricing_catalog")) if isinstance(item, dict)]
 
 
 def infer_portal_quota_adapter(profile: dict[str, Any]) -> str | None:
@@ -285,15 +752,11 @@ def infer_portal_quota_adapter(profile: dict[str, Any]) -> str | None:
 
 def effective_quota_adapter(profile: dict[str, Any]) -> str:
     quota = ensure_mapping(profile.get("quota"))
-    adapter = str(quota.get("adapter") or "").strip().lower()
-    if adapter and adapter != "manual":
-        return adapter
-    if adapter == "manual" and quota_has_manual_values(quota):
-        return adapter
     inferred_adapter = infer_portal_quota_adapter(profile)
     if inferred_adapter:
         return inferred_adapter
-    return adapter or "manual"
+    adapter = str(quota.get("adapter") or "").strip().lower()
+    return adapter if adapter in {"custom-script", "unsupported"} else "unsupported"
 
 
 def resolve_provider_api_base(api_base: str | None, custom_llm_provider: str | None) -> str:
@@ -309,9 +772,8 @@ def api_base_mismatch_hint(custom_llm_provider: str | None, api_base: str | None
     if provider_name == "anthropic" and value.endswith("/v1"):
         base = value[:-3].rstrip("/") or value
         return (
-            "Provider=anthropic 时系统会自动补 /v1/models 和 /v1/messages；"
-            f"当前 API Base 已包含 /v1，实际可能会请求成 /v1/v1/...。"
-            f"请把 API Base 改成不带 /v1 的根地址，例如 {base}"
+            "Provider=anthropic 支持填写根地址或已经包含 /v1 的 API Base；"
+            f"当前地址 {value} 会自动使用 {base}/v1/models 和 {base}/v1/messages，避免重复拼接 /v1。"
         )
     if status_code == 404 and provider_name == "anthropic":
         return "当前接口不像原生 Anthropic 路径；如果这是 OpenAI 兼容中转站，请把 Provider 类型改成 openai 再试。"
@@ -345,6 +807,217 @@ def supplier_provider_key(supplier_id: str | None, provider_name: str | None = N
     supplier_key = str(supplier_id or "").strip() or "no-supplier"
     provider_key = normalize_provider_name(provider_name)
     return make_stable_id("billing-supplier", supplier_key, provider_key or "openai")
+
+
+def supplier_platform_key(api_base: str | None, fallback: str | None = None) -> str:
+    parsed = urlparse(str(api_base or "").strip())
+    hostname = (parsed.hostname or "").lower().removeprefix("www.")
+    if hostname:
+        parts = [part for part in hostname.split(".") if part]
+        if len(parts) > 2:
+            return ".".join(parts[-2:])
+        return hostname
+    return str(fallback or "未分组供应商").strip() or "未分组供应商"
+
+
+def split_quota_credentials(quota: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, str]]:
+    public_config: dict[str, Any] = {}
+    credentials: dict[str, str] = {}
+    for raw_key, value in ensure_mapping(quota).items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        if key in SENSITIVE_QUOTA_CREDENTIAL_FIELDS:
+            if value not in (None, ""):
+                credentials[key] = str(value)
+            continue
+        public_config[key] = value
+    return public_config, credentials
+
+
+def adapter_scoped_quota(quota: dict[str, Any], manifest: dict[str, Any] | None) -> dict[str, Any]:
+    public_config, credentials = split_quota_credentials(quota)
+    permissions = {
+        str(item or "").strip()
+        for item in ensure_list(ensure_mapping(manifest).get("credential_permissions"))
+        if str(item or "").strip() in SENSITIVE_QUOTA_CREDENTIAL_FIELDS
+    }
+    return {**public_config, **{key: value for key, value in credentials.items() if key in permissions}}
+
+
+def redact_sensitive_data(value: Any, secret_values: list[str] | None = None) -> Any:
+    secrets = [item for item in (secret_values or []) if item]
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key or "").strip().lower()
+            if any(fragment in normalized_key for fragment in SENSITIVE_KEY_FRAGMENTS):
+                redacted[str(key)] = "[redacted]"
+            else:
+                redacted[str(key)] = redact_sensitive_data(item, secrets)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_data(item, secrets) for item in value]
+    if isinstance(value, str):
+        redacted_value = value
+        for secret in secrets:
+            if secret and secret in redacted_value:
+                redacted_value = redacted_value.replace(secret, "[redacted]")
+        return redacted_value
+    return value
+
+
+def supplier_platform_key_for_profile(
+    profile: dict[str, Any],
+    suppliers_by_id: dict[str, dict[str, Any]] | None = None,
+) -> str:
+    supplier = (suppliers_by_id or {}).get(str(profile.get("supplier_id") or ""), {})
+    fallback = supplier.get("name") or supplier.get("label") or profile.get("label")
+    return supplier_platform_key(profile.get("api_base"), fallback)
+
+
+def supplier_platform_provider_key(platform_key: str) -> str:
+    return make_stable_id("billing-platform", str(platform_key or "").strip().lower())
+
+
+def supplier_quota_targets(
+    management_state: dict[str, Any],
+    allowed_profile_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    suppliers_by_id = {
+        str(item.get("id") or ""): item
+        for item in management_state.get("suppliers", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for profile in management_state.get("api_profiles", []):
+        if not isinstance(profile, dict) or not profile.get("id"):
+            continue
+        key = supplier_platform_key_for_profile(profile, suppliers_by_id)
+        grouped.setdefault(key, []).append(profile)
+
+    supplier_quotas = ensure_mapping(management_state.get("supplier_quotas"))
+    targets: list[dict[str, Any]] = []
+    for platform_key, profiles in grouped.items():
+        selected_profile_ids = [
+            str(profile.get("id") or "")
+            for profile in profiles
+            if allowed_profile_ids is None or str(profile.get("id") or "") in allowed_profile_ids
+        ]
+        if allowed_profile_ids is not None and not selected_profile_ids:
+            continue
+        representative = next((profile for profile in profiles if profile.get("enabled", True)), profiles[0])
+        targets.append(
+            {
+                "platform_key": platform_key,
+                "provider_key": supplier_platform_provider_key(platform_key),
+                "profiles": profiles,
+                "selected_profile_ids": selected_profile_ids,
+                "representative_profile": representative,
+                "quota": resolved_supplier_quota_config(platform_key, ensure_mapping(supplier_quotas.get(platform_key))),
+            }
+        )
+    return sorted(targets, key=lambda item: item["platform_key"])
+
+
+def browser_sso_adapter_for_target(target: dict[str, Any]) -> dict[str, Any] | None:
+    platform_key = str(target.get("platform_key") or "").strip().lower()
+    quota = ensure_mapping(target.get("quota"))
+    adapter_id = str(quota.get("adapter") or "").strip().lower()
+    if adapter_id in BUILTIN_BROWSER_SSO_ADAPTERS:
+        try:
+            return browser_sso_adapter_for_supplier(platform_key, adapter_id)
+        except ValueError:
+            return None
+
+    if adapter_id != "custom-script":
+        return None
+    script_name = str(quota.get("script_name") or "").strip()
+    script_path = resolve_quota_adapter_script(script_name)
+    if not script_path:
+        return None
+    try:
+        manifest = load_quota_adapter_manifest(script_path)
+    except Exception:
+        return None
+    raw_config = ensure_mapping(manifest.get("browser_sso"))
+    if not raw_config:
+        return None
+    portal_hosts = [
+        str(host).strip().lower()
+        for host in ensure_list(raw_config.get("portal_hosts") or manifest.get("supported_hosts"))
+        if str(host).strip()
+    ]
+    if not portal_hosts or not str(raw_config.get("auth_me_path") or "/api/v1/auth/me").strip():
+        return None
+    return {
+        "id": str(manifest.get("id") or script_path.stem),
+        "display_name": str(manifest.get("display_name") or script_path.stem),
+        "supplier_key": platform_key,
+        "portal_hosts": portal_hosts,
+        "login_path": str(raw_config.get("login_path") or "/dashboard"),
+        "auth_me_path": str(raw_config.get("auth_me_path") or "/api/v1/auth/me"),
+        "cookie_domains": [
+            str(domain).strip().lower()
+            for domain in ensure_list(raw_config.get("cookie_domains") or portal_hosts)
+            if str(domain).strip()
+        ],
+        "google_rejection_check": bool(raw_config.get("google_rejection_check", True)),
+    }
+
+
+def migrate_legacy_supplier_quota_state(
+    state: dict[str, Any],
+    credential_vault: CredentialVault | Any | None = None,
+) -> tuple[dict[str, Any], bool]:
+    migrated = copy.deepcopy(state or {})
+    vault = credential_vault or get_credential_vault()
+    suppliers = [item for item in ensure_list(migrated.get("suppliers")) if isinstance(item, dict)]
+    suppliers_by_id = {str(item.get("id") or ""): item for item in suppliers if item.get("id")}
+    profiles = [item for item in ensure_list(migrated.get("api_profiles")) if isinstance(item, dict)]
+    raw_supplier_quotas = migrated.get("supplier_quotas")
+    supplier_quotas: dict[str, dict[str, Any]] = {}
+    changed = not isinstance(raw_supplier_quotas, dict)
+
+    for raw_key, raw_quota in ensure_mapping(raw_supplier_quotas).items():
+        key = str(raw_key or "").strip().lower()
+        if not key:
+            changed = True
+            continue
+        public_config, credentials = split_quota_credentials(ensure_mapping(raw_quota))
+        if credentials:
+            vault.merge(key, credentials)
+            changed = True
+        cleaned_config = persisted_supplier_quota_config(public_config)
+        if cleaned_config != public_config:
+            changed = True
+        supplier_quotas[key] = cleaned_config
+
+    for profile in profiles:
+        legacy_quota = ensure_mapping(profile.get("quota"))
+        if not legacy_quota:
+            profile["quota"] = {}
+            continue
+        platform_key = supplier_platform_key_for_profile(profile, suppliers_by_id)
+        public_config, credentials = split_quota_credentials(legacy_quota)
+        if credentials:
+            vault.merge(platform_key, credentials)
+        target = supplier_quotas.setdefault(platform_key, {})
+        for key, value in public_config.items():
+            if key not in target or target[key] in (None, ""):
+                target[key] = value
+        profile["quota"] = {}
+        changed = True
+
+    for platform_key, quota in list(supplier_quotas.items()):
+        cleaned_quota = persisted_supplier_quota_config(quota)
+        if cleaned_quota != quota:
+            changed = True
+        supplier_quotas[platform_key] = cleaned_quota
+
+    migrated["api_profiles"] = profiles
+    migrated["supplier_quotas"] = supplier_quotas
+    return migrated, changed
 
 
 def parse_window_start(value: str | None) -> str | None:
@@ -468,6 +1141,7 @@ def summarize_profile_usage(profile: dict[str, Any], usage_events: list[dict[str
     balance_total = (latest_balance or {}).get("balance_total")
     balance_used = (latest_balance or {}).get("balance_used")
     balance_remaining = (latest_balance or {}).get("balance_remaining")
+    billing_mode = normalize_billing_mode((latest_balance or {}).get("billing_mode") or quota.get("billing_mode"))
 
     if balance_total in (None, "") and manual_limit not in (None, ""):
         balance_total = float(manual_limit)
@@ -476,11 +1150,21 @@ def summarize_profile_usage(profile: dict[str, Any], usage_events: list[dict[str
     if balance_remaining in (None, "") and balance_total not in (None, "") and balance_used not in (None, ""):
         balance_remaining = float(balance_total) - float(balance_used)
 
-    cycle_adjusted = apply_latest_recharge_cycle(
-        recharge_records,
-        balance_total=balance_total,
-        balance_used=balance_used,
-        balance_remaining=balance_remaining,
+    cycle_adjusted = (
+        apply_latest_recharge_cycle(
+            recharge_records,
+            balance_total=balance_total,
+            balance_used=balance_used,
+            balance_remaining=balance_remaining,
+        )
+        if billing_mode == "balance"
+        else {
+            "balance_total": balance_total,
+            "balance_used": balance_used,
+            "balance_remaining": balance_remaining,
+            "cycle_recharge_record": None,
+            "quota_message": "",
+        }
     )
     balance_total = cycle_adjusted.get("balance_total")
     balance_used = cycle_adjusted.get("balance_used")
@@ -511,6 +1195,10 @@ def summarize_profile_usage(profile: dict[str, Any], usage_events: list[dict[str
         "balance_total": float(balance_total) if balance_total not in (None, "") else None,
         "balance_used": float(balance_used) if balance_used not in (None, "") else None,
         "balance_remaining": float(balance_remaining) if balance_remaining not in (None, "") else None,
+        "billing_mode": billing_mode,
+        "quota_items": snapshot_quota_items(latest_balance),
+        "period_start": (latest_balance or {}).get("period_start") or quota.get("period_start") or "",
+        "period_end": (latest_balance or {}).get("period_end") or quota.get("period_end") or "",
         "percent_used": round(percent_used, 2) if percent_used is not None else None,
         "progress_tone": provider_progress_tone(percent_used),
         "recharge_paid_cny": round(total_paid_cny, 4),
@@ -530,6 +1218,7 @@ def summarize_binding_model_usage(
     profile: dict[str, Any],
     supplier: dict[str, Any],
     usage_events: list[dict[str, Any]],
+    cash_costs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     matched_events = [item for item in usage_events if usage_event_matches_binding(item, route, binding)]
     total_prompt = 0
@@ -538,6 +1227,9 @@ def summarize_binding_model_usage(
     estimated_cost = 0.0
     actual_cost = 0.0
     actual_cost_count = 0
+    cash_cost_cny = 0.0
+    cash_cost_count = 0
+    cash_tokens = 0
     success_count = 0
     total_requests = 0
     latency_sum = 0
@@ -556,6 +1248,13 @@ def summarize_binding_model_usage(
         if item.get("actual_cost") not in (None, ""):
             actual_cost += float(item.get("actual_cost") or 0)
             actual_cost_count += 1
+        event_id = str(item.get("id") or item.get("request_id") or "")
+        attribution = ensure_mapping((cash_costs or {}).get(event_id))
+        attribution_status = str(attribution.get("status") or "")
+        if attribution_status.startswith("attributed-") and float(attribution.get("total_cny") or 0) > 0:
+            cash_cost_cny += float(attribution.get("total_cny") or 0)
+            cash_cost_count += 1
+            cash_tokens += int(item.get("total_tokens") or 0)
         if item.get("latency_ms") not in (None, ""):
             latency_sum += int(item.get("latency_ms") or 0)
             latency_count += 1
@@ -568,7 +1267,12 @@ def summarize_binding_model_usage(
     effective_cost_per_1m = None
     tokens_per_cost_unit = None
     cost_source = "none"
-    if total_tokens > 0 and actual_cost_count > 0 and actual_cost > 0:
+    if cash_tokens > 0 and cash_cost_count > 0 and cash_cost_cny > 0:
+        effective_cost_per_1m = cash_cost_cny / cash_tokens * 1_000_000
+        tokens_per_cost_unit = cash_tokens / cash_cost_cny
+        cost_currency = "CNY"
+        cost_source = "actual-cash"
+    elif total_tokens > 0 and actual_cost_count > 0 and actual_cost > 0:
         effective_cost_per_1m = actual_cost / total_tokens * 1_000_000
         tokens_per_cost_unit = total_tokens / actual_cost
         cost_currency = str(matched_events[-1].get("currency") or price_currency or "USD")
@@ -599,6 +1303,9 @@ def summarize_binding_model_usage(
         "estimated_cost": round(estimated_cost, 6),
         "actual_cost": round(actual_cost, 6) if actual_cost_count else None,
         "actual_cost_count": actual_cost_count,
+        "cash_cost_cny": round(cash_cost_cny, 6) if cash_cost_count else None,
+        "cash_cost_count": cash_cost_count,
+        "cash_tokens": cash_tokens,
         "cost_currency": cost_currency,
         "effective_cost_per_1m": round(effective_cost_per_1m, 6) if effective_cost_per_1m is not None else None,
         "tokens_per_cost_unit": round(tokens_per_cost_unit, 4) if tokens_per_cost_unit is not None else None,
@@ -615,6 +1322,52 @@ def latest_balance_for_profile(store: Any, profile: dict[str, Any]) -> dict[str,
         profile_provider_key(profile),
         api_key_env=str(profile.get("api_key_env") or "").strip() or None,
     )
+
+
+def latest_balance_for_supplier_platform(
+    store: Any,
+    platform_key: str,
+    *,
+    provider_key: str | None = None,
+) -> dict[str, Any] | None:
+    resolved_provider_key = provider_key or supplier_platform_provider_key(platform_key)
+    snapshots = store.list_provider_balance_snapshots(limit=25, provider_key=resolved_provider_key)
+    if not snapshots:
+        return None
+    latest = dict(snapshots[0])
+    latest["stale_balance"] = False
+    has_quota_data = bool(snapshot_quota_items(latest))
+    if not has_quota_data:
+        previous = next(
+            (
+                item
+                for item in snapshots[1:]
+                if snapshot_quota_items(item)
+            ),
+            None,
+        )
+        if previous:
+            for key in ("balance_total", "balance_used", "balance_remaining", "billing_mode", "quota_items", "currency", "period_start", "period_end"):
+                latest[key] = previous.get(key)
+            latest["stale_balance"] = True
+            latest["balance_value_checked_at"] = previous.get("checked_at")
+    latest["quota_items"] = snapshot_quota_items(latest)
+    if not latest.get("stale_balance") and normalize_billing_mode(latest.get("billing_mode")) == "balance":
+        previous_remaining_snapshot = next(
+            (
+                item
+                for item in snapshots[1:]
+                if str(item.get("status") or "") == "ok"
+                and item.get("balance_remaining") not in (None, "")
+            ),
+            None,
+        )
+        latest = apply_billing_mode_snapshot(
+            latest,
+            previous_snapshot=previous_remaining_snapshot,
+            billing_mode="balance",
+        )
+    return latest
 
 
 def parse_snapshot_raw_summary(latest_balance: dict[str, Any] | None) -> dict[str, Any]:
@@ -676,31 +1429,20 @@ def quota_display_message(profile: dict[str, Any], latest_balance: dict[str, Any
 
     quota = ensure_mapping(profile.get("quota"))
     if not bool(quota.get("enabled", False)):
-        return "未启用额度进度。"
+        return "未启用自动额度监控。"
 
     adapter = effective_quota_adapter(profile)
-    if adapter == "manual":
-        has_any_value = quota_has_manual_values(quota)
-        return "手动额度模式：请填写总额 / 已用 / 剩余。" if not has_any_value else "手动额度模式：可点击刷新额度更新进度条。"
-
-    if adapter in {"custom-script", "custom_script", "script"}:
+    if adapter == "custom-script":
         if not str(quota.get("script_name") or quota.get("script_path") or "").strip():
-            return "自定义脚本模式：请填写 script_name，再点击刷新额度。"
-        return "自定义脚本模式：将按 quota-adapters 目录里的脚本抓取额度。"
+            return "额度适配器清单缺少脚本文件名。"
+        return "已自动绑定供应商额度脚本。"
 
-    if adapter in {"lingsuan-web", "autocode-web", "portal_web_token"}:
-        if not str(quota.get("auth_token") or "").strip():
-            return "自动额度模式：缺少网站 auth_token。"
-        return "自动额度模式：请点击刷新额度。"
+    if adapter in {"lingsuan-web", "autocode-web"}:
+        if not str(quota.get("auth_token") or quota.get("session_cookie") or "").strip():
+            return "网站登录凭据尚未建立，请先完成供应商登录。"
+        return "已自动绑定网站额度适配器，可刷新额度。"
 
-    if adapter in {"lingsuan-admin", "autocode-admin", "portal_admin_key"}:
-        if not str(quota.get("admin_api_key") or "").strip():
-            return "自动额度模式：缺少 admin_api_key。"
-        if not str(quota.get("user_id") or "").strip():
-            return "自动额度模式：建议补充 user_id，再点击刷新额度。"
-        return "自动额度模式：请点击刷新额度。"
-
-    return f"额度模式 {adapter} 尚未刷新。"
+    return "暂未安装该供应商的额度适配器。"
 
 
 def recharge_records_for_profile(store: Any, profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -716,11 +1458,18 @@ def recharge_records_for_supplier(
     supplier_id: str | None,
     *,
     provider_name: str | None = None,
+    platform_key: str | None = None,
 ) -> list[dict[str, Any]]:
-    return store.list_recharge_records(
-        limit=500,
-        provider_key=supplier_provider_key(supplier_id, provider_name),
-    )
+    provider_keys = {
+        supplier_provider_key(supplier_id, provider_name),
+    }
+    if platform_key:
+        provider_keys.add(supplier_platform_provider_key(platform_key))
+    records_by_id: dict[str, dict[str, Any]] = {}
+    for provider_key in provider_keys:
+        for item in store.list_recharge_records(limit=500, provider_key=provider_key):
+            records_by_id[str(item.get("id") or f"{provider_key}:{len(records_by_id)}")] = item
+    return list(records_by_id.values())
 
 
 def apply_latest_recharge_cycle(
@@ -816,6 +1565,128 @@ def usage_events_for_profile(store: Any, profile: dict[str, Any], start_at: str 
     return filtered
 
 
+def supplier_cost_attribution_snapshot(
+    management_state: dict[str, Any],
+    store: Any,
+    start_at: str,
+    end_at: str,
+) -> dict[str, dict[str, Any]]:
+    suppliers = {
+        str(item.get("id") or ""): item
+        for item in management_state.get("suppliers", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    profiles = [
+        item
+        for item in management_state.get("api_profiles", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    profiles_by_platform: dict[str, list[dict[str, Any]]] = {}
+    for profile in profiles:
+        supplier = suppliers.get(str(profile.get("supplier_id") or ""), {})
+        platform_key = supplier_platform_key(profile.get("api_base"), supplier.get("name"))
+        profiles_by_platform.setdefault(platform_key, []).append(profile)
+
+    start_dt = iso_to_dt(start_at)
+    end_dt = iso_to_dt(end_at)
+    all_events = store.list_usage_events(limit=10000, source="litellm_gateway")
+    result: dict[str, dict[str, Any]] = {}
+    for platform_key, platform_profiles in profiles_by_platform.items():
+        profile_ids = {str(item.get("id") or "") for item in platform_profiles}
+        events: list[dict[str, Any]] = []
+        for item in all_events:
+            item_platform = str(item.get("platform_key") or "").strip().lower()
+            if item_platform:
+                if item_platform != platform_key:
+                    continue
+            elif str(item.get("api_profile_id") or "") not in profile_ids:
+                continue
+            created_dt = iso_to_dt(item.get("created_at"))
+            if start_dt is not None and created_dt is not None and created_dt < start_dt:
+                continue
+            if end_dt is not None and created_dt is not None and created_dt > end_dt:
+                continue
+            events.append(item)
+
+        provider_keys = {
+            supplier_provider_key(
+                profile.get("supplier_id"),
+                profile.get("custom_llm_provider"),
+            )
+            for profile in platform_profiles
+        }
+        records_by_id: dict[str, dict[str, Any]] = {}
+        for provider_key in provider_keys:
+            for record in store.list_recharge_records(limit=1000, provider_key=provider_key):
+                records_by_id[str(record.get("id") or f"{provider_key}:{len(records_by_id)}")] = record
+        platform_provider_key = supplier_platform_provider_key(platform_key)
+        for record in store.list_recharge_records(limit=1000, provider_key=platform_provider_key):
+            records_by_id[str(record.get("id") or f"{platform_provider_key}:{len(records_by_id)}")] = record
+        records = list(records_by_id.values())
+        latest_balance = latest_balance_for_supplier_platform(store, platform_key)
+        quota_items = parse_quota_items((latest_balance or {}).get("quota_items"))
+        attribution = attribute_supplier_costs(events, records, start_at, end_at)
+        subscription_usage = subscription_usage_summary(records, quota_items, as_of=end_at)
+        gateway_requests = len(events)
+        priced_requests = sum(1 for item in events if item.get("pricing_version_id"))
+        currencies = sorted(
+            {
+                str(item.get("currency") or "").strip().upper()
+                for item in events
+                if str(item.get("currency") or "").strip()
+            }
+        )
+        topup_bases = {
+            currency: weighted_topup_basis(records, currency)
+            for currency in currencies
+        }
+        current_subscription = subscription_amortization(records, end_at, end_at)
+        recent_events = [
+            {
+                "id": item.get("id"),
+                "created_at": item.get("created_at"),
+                "request_id": item.get("request_id"),
+                "public_model_name": item.get("public_model_name"),
+                "upstream_model": item.get("upstream_model"),
+                "api_profile_id": item.get("api_profile_id"),
+                "route_binding_id": item.get("route_binding_id"),
+                "pricing_version_id": item.get("pricing_version_id"),
+                "prompt_tokens": int(item.get("prompt_tokens") or 0),
+                "completion_tokens": int(item.get("completion_tokens") or 0),
+                "total_tokens": int(item.get("total_tokens") or 0),
+                "estimated_cost": item.get("estimated_cost"),
+                "currency": item.get("currency"),
+                "latency_ms": item.get("latency_ms"),
+                "status": item.get("status"),
+                "cost_attribution_status": item.get("cost_attribution_status"),
+            }
+            for item in sorted(events, key=lambda row: str(row.get("created_at") or ""), reverse=True)[:20]
+        ]
+        result[platform_key] = {
+            "platform_key": platform_key,
+            "gateway_requests": gateway_requests,
+            "priced_requests": priced_requests,
+            "pricing_coverage": round(priced_requests / gateway_requests, 4) if gateway_requests else None,
+            "topup_cash_cost_cny": round(float(attribution["topup_cash_cost_cny"]), 6),
+            "subscription_amortized_cny": round(float(attribution["subscription_amortized_cny"]), 6),
+            "subscription_allocated_cny": round(float(attribution["subscription_allocated_cny"]), 6),
+            "subscription_unallocated_cny": round(float(attribution["subscription_unallocated_cny"]), 6),
+            "subscription_usage": subscription_usage,
+            "subscription_consumed_cost_cny": round(float(subscription_usage["consumed_cost_cny"]), 6),
+            "subscription_full_use_cost_per_credit_cny": round(float(subscription_usage["full_use_cost_per_credit_cny"]), 6) if subscription_usage.get("full_use_cost_per_credit_cny") is not None else None,
+            "subscription_projected_expiry_loss_cny": round(float(subscription_usage["projected_expiry_loss_cny"]), 6),
+            "subscription_confirmed_expiry_loss_cny": round(float(subscription_usage["confirmed_expiry_loss_cny"]), 6),
+            "attributed_cash_cost_cny": round(float(attribution["attributed_cash_cost_cny"]), 6),
+            "unattributed_requests": int(attribution["unattributed_requests"]),
+            "current_subscription_daily_cny": round(float(current_subscription["amortized_cny"]), 6),
+            "cost_batch_count": len(records),
+            "topup_bases": topup_bases,
+            "event_costs": attribution["event_costs"],
+            "recent_events": recent_events,
+        }
+    return result
+
+
 def quota_message_from_snapshot(latest_balance: dict[str, Any] | None) -> str:
     if not latest_balance:
         return ""
@@ -840,17 +1711,19 @@ def aggregate_supplier_usage_rows(
     store: Any,
     summary_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    grouped: dict[str, dict[str, Any]] = {}
     for row in summary_rows:
         supplier_id = str(row.get("supplier_id") or "").strip()
-        provider_name = normalize_provider_name(row.get("provider"))
-        group_key = (supplier_id, provider_name)
+        platform_key = supplier_platform_key(row.get("api_base"), row.get("supplier_name"))
+        group_key = platform_key
         group = grouped.get(group_key)
         if group is None:
             group = {
                 "supplier_id": supplier_id,
-                "supplier_name": row.get("supplier_name"),
-                "provider": provider_name,
+                "supplier_ids": set(),
+                "platform_key": platform_key,
+                "supplier_name": platform_key,
+                "provider": normalize_provider_name(row.get("provider")),
                 "rows": [],
                 "api_labels": [],
                 "latest_balance": None,
@@ -859,6 +1732,8 @@ def aggregate_supplier_usage_rows(
             }
             grouped[group_key] = group
 
+        if supplier_id:
+            group["supplier_ids"].add(supplier_id)
         group["rows"].append(row)
         api_label = str(row.get("api_label") or "").strip()
         if api_label and api_label not in group["api_labels"]:
@@ -869,11 +1744,15 @@ def aggregate_supplier_usage_rows(
         if checked_at and latest_balance_dt is not None:
             current_latest_dt = group.get("latest_balance_dt")
             if current_latest_dt is None or latest_balance_dt > current_latest_dt:
-                supplier_records = recharge_records_for_supplier(
-                    store,
-                    supplier_id,
-                    provider_name=provider_name,
-                )
+                supplier_records = []
+                for grouped_supplier_id in group["supplier_ids"]:
+                    supplier_records.extend(
+                        recharge_records_for_supplier(
+                            store,
+                            grouped_supplier_id,
+                            platform_key=group.get("platform_key"),
+                        )
+                    )
                 group["latest_balance"] = {
                     "checked_at": checked_at,
                     "status": row.get("balance_status"),
@@ -882,6 +1761,10 @@ def aggregate_supplier_usage_rows(
                     "balance_total": row.get("balance_total"),
                     "balance_used": row.get("balance_used"),
                     "balance_remaining": row.get("balance_remaining"),
+                    "billing_mode": row.get("billing_mode"),
+                    "quota_items": snapshot_quota_items(row),
+                    "period_start": row.get("period_start"),
+                    "period_end": row.get("period_end"),
                     "raw_summary": row.get("balance_raw_summary") or "",
                     "supplier_recharge_records": supplier_records,
                 }
@@ -924,13 +1807,24 @@ def aggregate_supplier_usage_rows(
         balance_total = latest_balance.get("balance_total")
         balance_used = latest_balance.get("balance_used")
         balance_remaining = latest_balance.get("balance_remaining")
+        billing_mode = normalize_billing_mode(latest_balance.get("billing_mode"))
         quota_message = quota_message_from_snapshot(latest_balance) or str(group.get("quota_message") or "")
-        cycle_adjusted = apply_latest_recharge_cycle(
-            supplier_recharge_records,
-            balance_total=balance_total,
-            balance_used=balance_used,
-            balance_remaining=balance_remaining,
-            quota_message=quota_message,
+        cycle_adjusted = (
+            apply_latest_recharge_cycle(
+                supplier_recharge_records,
+                balance_total=balance_total,
+                balance_used=balance_used,
+                balance_remaining=balance_remaining,
+                quota_message=quota_message,
+            )
+            if billing_mode == "balance"
+            else {
+                "balance_total": balance_total,
+                "balance_used": balance_used,
+                "balance_remaining": balance_remaining,
+                "quota_message": quota_message,
+                "cycle_recharge_record": None,
+            }
         )
         balance_total = cycle_adjusted.get("balance_total")
         balance_used = cycle_adjusted.get("balance_used")
@@ -953,6 +1847,7 @@ def aggregate_supplier_usage_rows(
         supplier_rows.append(
             {
                 "supplier_id": group["supplier_id"],
+                "platform_key": group["platform_key"],
                 "supplier_name": group["supplier_name"] or "未分组供应商",
                 "provider": group["provider"],
                 "api_count": len(rows),
@@ -970,6 +1865,10 @@ def aggregate_supplier_usage_rows(
                 "balance_total": float(balance_total) if balance_total not in (None, "") else None,
                 "balance_used": float(balance_used) if balance_used not in (None, "") else None,
                 "balance_remaining": float(balance_remaining) if balance_remaining not in (None, "") else None,
+                "billing_mode": billing_mode,
+                "quota_items": snapshot_quota_items(latest_balance),
+                "period_start": latest_balance.get("period_start"),
+                "period_end": latest_balance.get("period_end"),
                 "percent_used": round(percent_used, 2) if percent_used is not None else None,
                 "progress_tone": provider_progress_tone(percent_used),
                 "recharge_paid_cny": round(total_paid_cny, 4),
@@ -985,7 +1884,11 @@ def aggregate_supplier_usage_rows(
     return supplier_rows
 
 
-def aggregate_model_usage_rows(management_state: dict[str, Any], store: Any) -> list[dict[str, Any]]:
+def aggregate_model_usage_rows(
+    management_state: dict[str, Any],
+    store: Any,
+    cash_costs: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     suppliers = {
         str(item.get("id") or ""): item
         for item in management_state.get("suppliers", [])
@@ -1021,6 +1924,7 @@ def aggregate_model_usage_rows(management_state: dict[str, Any], store: Any) -> 
                 profile,
                 supplier,
                 usage_events_cache.get(str(profile.get("id") or ""), []),
+                cash_costs,
             )
         )
 
@@ -1038,8 +1942,11 @@ def aggregate_model_usage_rows(management_state: dict[str, Any], store: Any) -> 
 
 def usage_dashboard_snapshot(management_state: dict[str, Any]) -> dict[str, Any]:
     store = get_usage_quota_store()
+    window_start = month_start_iso_local()
+    window_end = now_iso_local()
     profiles = management_state.get("api_profiles", [])
     suppliers = {item["id"]: item for item in management_state.get("suppliers", []) if isinstance(item, dict) and item.get("id")}
+    supplier_quotas = ensure_mapping(management_state.get("supplier_quotas"))
     summary_rows: list[dict[str, Any]] = []
     total_prompt = 0
     total_completion = 0
@@ -1049,10 +1956,13 @@ def usage_dashboard_snapshot(management_state: dict[str, Any]) -> dict[str, Any]
     total_paid_cny = 0.0
     alerts: list[dict[str, Any]] = []
     for profile in profiles:
-        usage_events = usage_events_for_profile(store, profile, month_start_iso_local())
+        platform_key = supplier_platform_key_for_profile(profile, suppliers)
+        supplier_quota = split_quota_credentials(ensure_mapping(supplier_quotas.get(platform_key)))[0]
+        profile_for_summary = {**profile, "quota": supplier_quota}
+        usage_events = usage_events_for_profile(store, profile, window_start)
         recharge_records = recharge_records_for_profile(store, profile)
-        latest_balance = latest_balance_for_profile(store, profile)
-        row = summarize_profile_usage(profile, usage_events, recharge_records, latest_balance)
+        latest_balance = latest_balance_for_supplier_platform(store, platform_key) or latest_balance_for_profile(store, profile)
+        row = summarize_profile_usage(profile_for_summary, usage_events, recharge_records, latest_balance)
         supplier = suppliers.get(str(profile.get("supplier_id") or "").strip(), {})
         row.update(
             {
@@ -1063,11 +1973,12 @@ def usage_dashboard_snapshot(management_state: dict[str, Any]) -> dict[str, Any]
                 "provider": normalize_provider_name(profile.get("custom_llm_provider")),
                 "api_base": str(profile.get("api_base") or ""),
                 "known_models_count": len(profile.get("known_models") or []),
-                "balance_source": (latest_balance or {}).get("adapter") or ("manual" if profile.get("quota") else "unknown"),
+                "platform_key": platform_key,
+                "balance_source": (latest_balance or {}).get("adapter") or ("manual" if supplier_quota else "unknown"),
                 "balance_checked_at": (latest_balance or {}).get("checked_at"),
                 "balance_status": (latest_balance or {}).get("status") or "unknown",
                 "balance_raw_summary": (latest_balance or {}).get("raw_summary"),
-                "quota_message": row.get("cycle_quota_message") or quota_display_message(profile, latest_balance),
+                "quota_message": row.get("cycle_quota_message") or quota_display_message(profile_for_summary, latest_balance),
             }
         )
         if row.get("percent_used") is not None and row["percent_used"] >= 80:
@@ -1088,7 +1999,22 @@ def usage_dashboard_snapshot(management_state: dict[str, Any]) -> dict[str, Any]
         summary_rows.append(row)
 
     supplier_rows = aggregate_supplier_usage_rows(store, summary_rows)
-    model_rows = aggregate_model_usage_rows(management_state, store)
+    supplier_costs = supplier_cost_attribution_snapshot(
+        management_state,
+        store,
+        window_start,
+        window_end,
+    )
+    for row in supplier_rows:
+        row["cost_attribution"] = supplier_costs.get(str(row.get("platform_key") or ""), {})
+    event_costs: dict[str, Any] = {}
+    for supplier_cost in supplier_costs.values():
+        event_costs.update(ensure_mapping(supplier_cost.get("event_costs")))
+    model_rows = [
+        item
+        for item in aggregate_model_usage_rows(management_state, store, event_costs)
+        if item.get("cost_source") == "actual-cash"
+    ]
     comparison_rows = sorted(
         model_rows,
         key=lambda item: (
@@ -1097,11 +2023,11 @@ def usage_dashboard_snapshot(management_state: dict[str, Any]) -> dict[str, Any]
         ),
     )
     return {
-        "generated_at": now_iso_local(),
+        "generated_at": window_end,
         "window": {
             "preset": "month_to_date",
-            "start_at": month_start_iso_local(),
-            "end_at": now_iso_local(),
+            "start_at": window_start,
+            "end_at": window_end,
         },
         "totals": {
             "prompt_tokens": total_prompt,
@@ -1110,6 +2036,16 @@ def usage_dashboard_snapshot(management_state: dict[str, Any]) -> dict[str, Any]
             "estimated_cost": round(total_estimated_cost, 6),
             "actual_cost": round(total_actual_cost, 6) if total_actual_cost else None,
             "recharge_paid_cny": round(total_paid_cny, 4),
+            "attributed_cash_cost_cny": round(
+                sum(float(item.get("attributed_cash_cost_cny") or 0) for item in supplier_costs.values()),
+                6,
+            ),
+            "subscription_amortized_cny": round(
+                sum(float(item.get("subscription_amortized_cny") or 0) for item in supplier_costs.values()),
+                6,
+            ),
+            "gateway_requests": sum(int(item.get("gateway_requests") or 0) for item in supplier_costs.values()),
+            "priced_gateway_requests": sum(int(item.get("priced_requests") or 0) for item in supplier_costs.values()),
             "providers": len(summary_rows),
             "suppliers": len(supplier_rows),
             "api_profiles": len(summary_rows),
@@ -1127,11 +2063,23 @@ def portal_base_for_profile(profile: dict[str, Any]) -> str:
     portal_base = str(quota.get("portal_base") or "").strip().rstrip("/")
     if portal_base:
         return portal_base
+    adapter_id = infer_portal_quota_adapter(profile)
+    for adapter in BUILTIN_BROWSER_SSO_ADAPTERS.values():
+        if str(adapter.get("id") or "").strip().lower() == adapter_id:
+            configured_base = str(adapter.get("portal_base") or "").strip().rstrip("/")
+            if configured_base:
+                return configured_base
     api_base = str(profile.get("api_base") or "").strip()
     parsed = urlparse(api_base)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}"
     return ""
+
+
+def supplier_http_client(*, timeout: float) -> httpx.Client:
+    """Use IPv4 for supplier sites whose IPv6 TLS route is unavailable locally."""
+    transport = httpx.HTTPTransport(local_address="0.0.0.0")
+    return httpx.Client(timeout=timeout, follow_redirects=True, transport=transport)
 
 
 def numeric_value(value: Any) -> float | None:
@@ -1199,6 +2147,13 @@ def pick_numeric_from_payload(payload: Any, aliases: set[str]) -> float | None:
     return numeric_value(value)
 
 
+def pick_text_from_payload(payload: Any, aliases: set[str]) -> str:
+    value = recursive_find_key(payload, aliases)
+    if value in (None, ""):
+        return ""
+    return str(value).strip()
+
+
 def extract_balance_snapshot_from_payloads(payloads: dict[str, Any], default_currency: str = "CNY") -> dict[str, Any]:
     prioritized = [
         "subscriptions_summary",
@@ -1212,6 +2167,8 @@ def extract_balance_snapshot_from_payloads(payloads: dict[str, Any], default_cur
     ]
     total = used = remaining = None
     currency = default_currency
+    period_start = ""
+    period_end = ""
     for name in prioritized:
         payload = payloads.get(name)
         if payload is None:
@@ -1259,6 +2216,16 @@ def extract_balance_snapshot_from_payloads(payloads: dict[str, Any], default_cur
         found_currency = recursive_find_key(payload, {"currency", "unit"})
         if isinstance(found_currency, str) and found_currency.strip():
             currency = found_currency.strip()
+        if not period_start:
+            period_start = pick_text_from_payload(
+                payload,
+                {"period_start", "cycle_start", "start_time", "start_at", "service_start", "begin_time"},
+            )
+        if not period_end:
+            period_end = pick_text_from_payload(
+                payload,
+                {"period_end", "cycle_end", "end_time", "end_at", "service_end", "expires_at", "expire_at", "valid_until"},
+            )
         if total is not None and remaining is not None and used is not None:
             break
 
@@ -1272,7 +2239,46 @@ def extract_balance_snapshot_from_payloads(payloads: dict[str, Any], default_cur
         "balance_used": used,
         "balance_remaining": remaining,
         "currency": currency or default_currency,
+        "period_start": period_start,
+        "period_end": period_end,
     }
+
+
+def extract_subscription_quota_items(payloads: dict[str, Any], default_currency: str = "CNY") -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for source_name in ("subscriptions_summary", "subscriptions_active", "subscriptions_progress"):
+        payload = payloads.get(source_name)
+        candidates: list[Any] = []
+        if isinstance(payload, list):
+            candidates = payload
+        elif isinstance(payload, dict):
+            for key in ("subscriptions", "plans", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    candidates.extend(value)
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                continue
+            total = pick_numeric_from_payload(candidate, {"total", "limit", "quota_total", "total_quota", "credit_total"})
+            used = pick_numeric_from_payload(candidate, {"used", "spent", "consumed", "usage", "used_amount"})
+            remaining = pick_numeric_from_payload(candidate, {"remaining", "available", "remaining_balance", "available_balance"})
+            if total is None and used is None and remaining is None:
+                continue
+            items.append(
+                {
+                    "id": str(candidate.get("id") or candidate.get("subscription_id") or candidate.get("plan_id") or f"subscription-{index + 1}"),
+                    "type": "subscription",
+                    "label": str(candidate.get("name") or candidate.get("title") or "套餐额度"),
+                    "currency": str(candidate.get("currency") or candidate.get("unit") or default_currency),
+                    "balance_total": total,
+                    "balance_used": used,
+                    "balance_remaining": remaining,
+                    "period_start": pick_text_from_payload(candidate, {"period_start", "cycle_start", "start_time", "service_start"}),
+                    "period_end": pick_text_from_payload(candidate, {"period_end", "cycle_end", "end_time", "expires_at", "service_end"}),
+                    "source": source_name,
+                }
+            )
+    return items
 
 
 def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
@@ -1299,6 +2305,17 @@ def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
             },
         }
 
+    try:
+        manifest = load_quota_adapter_manifest(script_path)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "adapter": adapter_name,
+            "message": f"适配器权限清单读取失败：{exc}",
+            "raw_summary": {"script": str(script_path)},
+        }
+    scoped_quota = adapter_scoped_quota(quota, manifest)
+
     context = {
         "profile": {
             "id": str(profile.get("id") or ""),
@@ -1306,9 +2323,13 @@ def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
             "supplier_id": str(profile.get("supplier_id") or ""),
             "api_base": str(profile.get("api_base") or ""),
             "api_key_env": str(profile.get("api_key_env") or ""),
-            "api_key_value": str(profile.get("api_key_value") or ""),
+            "api_key_value": (
+                str(profile.get("api_key_value") or "")
+                if "api_key_value" in set(manifest.get("credential_permissions") or [])
+                else ""
+            ),
             "custom_llm_provider": normalize_provider_name(profile.get("custom_llm_provider")),
-            "quota": quota,
+            "quota": scoped_quota,
         },
         "window": {
             "start_at": month_start_iso_local(),
@@ -1326,7 +2347,6 @@ def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
         command = [str(script_path)]
 
     env = os.environ.copy()
-    env["RELAYDECK_QUOTA_CONTEXT"] = json.dumps(context, ensure_ascii=False)
     # Force Python quota adapters to emit UTF-8 on Windows so non-ASCII fields
     # such as plan titles do not get mojibake when captured by the parent process.
     env["PYTHONIOENCODING"] = "utf-8"
@@ -1400,10 +2420,20 @@ def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
         "status": str(payload.get("status") or "unsupported"),
         "adapter": str(payload.get("adapter") or adapter_name),
         "message": str(payload.get("message") or ""),
+        "billing_mode": normalize_billing_mode(payload.get("billing_mode") or quota.get("billing_mode")),
         "balance_total": numeric_value(payload.get("balance_total")),
         "balance_used": numeric_value(payload.get("balance_used")),
         "balance_remaining": numeric_value(payload.get("balance_remaining")),
+        "period_start": str(payload.get("period_start") or ""),
+        "period_end": str(payload.get("period_end") or ""),
+        "quota_items": parse_quota_items(payload.get("quota_items")),
         "currency": str(payload.get("currency") or quota.get("currency") or "CNY"),
+        "pricing_catalog": pricing_catalog_from_adapter_payload(payload, manifest),
+        "credential_updates": {
+            key: value
+            for key, value in ensure_mapping(payload.get("credential_updates")).items()
+            if key in set(manifest.get("credential_permissions") or []) and value not in (None, "")
+        },
         "raw_summary": {
             **raw_summary,
             "script_output": payload.get("raw_summary") if isinstance(payload.get("raw_summary"), (dict, list, str)) else payload,
@@ -1411,158 +2441,14 @@ def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def probe_openai_compatible_balance(profile: dict[str, Any]) -> dict[str, Any]:
-    api_key = str(profile.get("api_key_value") or "").strip()
-    api_base = resolve_provider_api_base(profile.get("api_base"), profile.get("custom_llm_provider")).rstrip("/")
-    quota = ensure_mapping(profile.get("quota"))
-    default_currency = str(quota.get("currency") or "USD")
-
-    if normalize_provider_name(profile.get("custom_llm_provider")) != "openai":
-        return {
-            "status": "unsupported",
-            "adapter": "openai_compatible_balance",
-            "message": "当前 provider 不是 openai 兼容类型。",
-            "raw_summary": {"api_base": api_base},
-        }
-    if not api_base:
-        return {
-            "status": "unsupported",
-            "adapter": "openai_compatible_balance",
-            "message": "缺少 API Base，无法探测兼容余额接口。",
-            "raw_summary": {},
-        }
-    if not api_key:
-        return {
-            "status": "unsupported",
-            "adapter": "openai_compatible_balance",
-            "message": "缺少 API Key，无法探测兼容余额接口。",
-            "raw_summary": {"api_base": api_base},
-        }
-
-    start_date = month_start_iso_local()[:10]
-    end_date = now_iso_local()[:10]
-    raw_summary: dict[str, Any] = {
-        "api_base": api_base,
-        "adapter": "openai_compatible_balance",
-        "window": {"start_date": start_date, "end_date": end_date},
-    }
-    payloads: dict[str, Any] = {}
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    endpoint_specs: list[tuple[str, str, dict[str, Any] | None]] = [
-        ("billing_subscription", "/dashboard/billing/subscription", None),
-        ("billing_usage", "/dashboard/billing/usage", {"start_date": start_date, "end_date": end_date}),
-        ("balance", "/balance", None),
-        ("models_probe", "/models", None),
-        ("usage", "/api/v1/usage", None),
-        ("subscriptions_summary", "/api/v1/subscriptions/summary", None),
-    ]
-
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
-        for name, path, params in endpoint_specs:
-            url = f"{api_base}{path}"
-            try:
-                resp = client.get(url, headers=headers, params=params)
-                content_type = str(resp.headers.get("content-type") or "").lower()
-                try:
-                    body = resp.json()
-                except Exception:
-                    body_text = resp.text[:500]
-                    body = {"raw_text": body_text, "content_type": content_type}
-                raw_summary[name] = {
-                    "url": str(resp.request.url),
-                    "status_code": resp.status_code,
-                    "content_type": content_type,
-                    "body": body,
-                }
-                if resp.status_code < 400:
-                    payloads[name] = body
-            except Exception as exc:
-                raw_summary[name] = {"url": url, "error": str(exc)}
-
-    subscription = ensure_mapping(payloads.get("billing_subscription"))
-    usage_payload = ensure_mapping(payloads.get("billing_usage"))
-    balance_payload = ensure_mapping(payloads.get("balance"))
-
-    total = pick_numeric_from_payload(
-        subscription,
-        {"hard_limit_usd", "soft_limit_usd", "system_hard_limit_usd", "total", "limit", "quota_total"},
-    )
-    used = pick_numeric_from_payload(usage_payload, {"total_usage", "used", "usage", "spent", "consumed"})
-    remaining = pick_numeric_from_payload(
-        balance_payload,
-        {"remaining", "available", "balance", "remaining_balance", "current_balance", "available_balance"},
-    )
-
-    if remaining is None and total is not None and used is not None:
-        remaining = total - used
-    if used is None and total is not None and remaining is not None:
-        used = total - remaining
-
-    fallback_snapshot = extract_balance_snapshot_from_payloads(payloads, default_currency)
-    if total is None:
-        total = fallback_snapshot.get("balance_total")
-    if used is None:
-        used = fallback_snapshot.get("balance_used")
-    if remaining is None:
-        remaining = fallback_snapshot.get("balance_remaining")
-
-    currency = str(
-        recursive_find_key(subscription, {"currency", "unit"})
-        or recursive_find_key(usage_payload, {"currency", "unit"})
-        or recursive_find_key(balance_payload, {"currency", "unit"})
-        or fallback_snapshot.get("currency")
-        or default_currency
-    ).strip() or default_currency
-    status = "ok" if any(value is not None for value in (total, used, remaining)) else "unsupported"
-    message = ""
-    if status != "ok":
-        billing_subscription_body = ensure_mapping(raw_summary.get("billing_subscription", {}).get("body"))
-        billing_usage_body = ensure_mapping(raw_summary.get("billing_usage", {}).get("body"))
-        models_probe_body = ensure_mapping(raw_summary.get("models_probe", {}).get("body"))
-        portal_usage_body = ensure_mapping(raw_summary.get("usage", {}).get("body"))
-        subscriptions_summary_body = ensure_mapping(raw_summary.get("subscriptions_summary", {}).get("body"))
-
-        html_shell_detected = any(
-            looks_like_html_document(str(ensure_mapping(raw_summary.get(name, {}).get("body")).get("raw_text") or ""))
-            for name in ("billing_subscription", "billing_usage", "balance")
-        )
-        model_probe_code = str(models_probe_body.get("code") or "")
-        model_probe_message = str(models_probe_body.get("message") or "")
-        portal_usage_code = str(portal_usage_body.get("code") or "")
-        subscriptions_code = str(subscriptions_summary_body.get("code") or "")
-
-        if model_probe_code == "GROUP_DELETED" or "分组已删除" in model_probe_message:
-            message = "当前 API Key 所属分组已删除，请先更换灵算站内仍然有效的 API Key。"
-            if html_shell_detected or portal_usage_code == "INVALID_TOKEN" or subscriptions_code == "INVALID_TOKEN":
-                message += " 另外，灵算额度接口不是标准 OpenAI 账单 JSON，通常还需要站点后台 auth_token。"
-        elif portal_usage_code == "INVALID_TOKEN" or subscriptions_code == "INVALID_TOKEN":
-            message = "灵算的额度接口需要站点后台 auth_token，不能直接用 API Key 查询余额。"
-        elif html_shell_detected:
-            message = "灵算返回的是前台 HTML 页面，不是可直接读取的账单 JSON；这条链路通常要改用站点后台 auth_token。"
-        else:
-            message = "API Key 可访问兼容账单端点，但暂未识别出统一余额字段。"
-
-    return {
-        "status": status,
-        "adapter": "openai_compatible_balance",
-        "message": message,
-        "raw_summary": raw_summary,
-        "balance_total": total,
-        "balance_used": used,
-        "balance_remaining": remaining,
-        "currency": currency,
-    }
-
-
 def probe_portal_quota(profile: dict[str, Any]) -> dict[str, Any]:
     quota = ensure_mapping(profile.get("quota"))
     adapter = effective_quota_adapter(profile)
+    billing_mode = normalize_billing_mode(quota.get("billing_mode"))
     portal_base = portal_base_for_profile(profile)
     default_currency = str(quota.get("currency") or "CNY")
     auth_token = str(quota.get("auth_token") or "").strip()
     session_cookie = normalize_session_cookie_header(quota.get("session_cookie"))
-    admin_api_key = str(quota.get("admin_api_key") or "").strip()
-    configured_user_id = str(quota.get("user_id") or "").strip()
 
     if not portal_base:
         return {
@@ -1572,37 +2458,23 @@ def probe_portal_quota(profile: dict[str, Any]) -> dict[str, Any]:
             "raw_summary": {},
         }
 
-    headers: dict[str, str] = {"Accept": "application/json"}
-    auth_mode = ""
-    if adapter in {"openai-compatible", "openai_compatible_balance", "provider_api"}:
-        return probe_openai_compatible_balance(profile)
-    if adapter in {"lingsuan-web", "autocode-web", "portal_web_token"}:
-        if not auth_token and not session_cookie:
-            return {
-                "status": "unsupported",
-                "adapter": adapter,
-                "message": "缺少网站后台 auth_token / session_cookie。请先在浏览器登录站点后台，再把其中一项填到面板里。",
-                "raw_summary": {"portal_base": portal_base},
-            }
-        auth_mode = "website_token"
-    elif adapter in {"lingsuan-admin", "autocode-admin", "portal_admin_key"}:
-        if not admin_api_key:
-            return {
-                "status": "unsupported",
-                "adapter": adapter,
-                "message": "缺少后台 admin API key。",
-                "raw_summary": {"portal_base": portal_base},
-            }
-        headers["x-api-key"] = admin_api_key
-        auth_mode = "admin_api_key"
-    else:
+    if adapter not in {"lingsuan-web", "autocode-web"}:
         return {
             "status": "unsupported",
-            "adapter": adapter or "manual",
-            "message": "当前 adapter 不是自动额度探测类型。",
+            "adapter": adapter or "unsupported",
+            "message": "当前供应商未绑定网站额度适配器。",
+            "raw_summary": {"portal_base": portal_base},
+        }
+    if not auth_token and not session_cookie:
+        return {
+            "status": "unsupported",
+            "adapter": adapter,
+            "message": "缺少网站后台 auth_token / session_cookie，请先完成供应商登录。",
             "raw_summary": {"portal_base": portal_base},
         }
 
+    headers: dict[str, str] = {"Accept": "application/json"}
+    auth_mode = "website_token"
     raw_summary: dict[str, Any] = {
         "portal_base": portal_base,
         "auth_mode": auth_mode,
@@ -1610,56 +2482,50 @@ def probe_portal_quota(profile: dict[str, Any]) -> dict[str, Any]:
         "session_cookie_configured": bool(session_cookie),
     }
 
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
-        user_id = configured_user_id
-        if auth_mode == "website_token":
-            me_url = f"{portal_base}/api/v1/auth/me"
-            auth_attempts: list[tuple[str, dict[str, str]]] = []
-            if auth_token:
-                auth_attempts.append(("website_token", {**headers, "Authorization": f"Bearer {auth_token}"}))
-            if session_cookie:
-                auth_attempts.append(("website_session_cookie", {**headers, "Cookie": session_cookie}))
+    with supplier_http_client(timeout=20) as client:
+        user_id = ""
+        me_url = f"{portal_base}/api/v1/auth/me"
+        auth_attempts: list[tuple[str, dict[str, str]]] = []
+        if auth_token:
+            auth_attempts.append(("website_token", {**headers, "Authorization": f"Bearer {auth_token}"}))
+        if session_cookie:
+            auth_attempts.append(("website_session_cookie", {**headers, "Cookie": session_cookie}))
 
-            selected_headers: dict[str, str] | None = None
-            last_error_message = ""
-            for attempt_mode, attempt_headers in auth_attempts:
+        selected_headers: dict[str, str] | None = None
+        last_error_message = ""
+        for attempt_mode, attempt_headers in auth_attempts:
+            try:
+                me_resp = client.get(me_url, headers=attempt_headers)
                 try:
-                    me_resp = client.get(me_url, headers=attempt_headers)
-                    try:
-                        me_body = me_resp.json()
-                    except Exception:
-                        me_body = {"raw_text": me_resp.text[:500]}
-                    raw_summary[f"auth_me_{attempt_mode}"] = {
-                        "status_code": me_resp.status_code,
-                        "body": me_body,
-                    }
-                    if me_resp.status_code < 400:
-                        auth_mode = attempt_mode
-                        selected_headers = attempt_headers
-                        user_id = user_id or extract_portal_user_id(normalize_portal_data(me_body))
-                        break
-                    if me_resp.status_code == 401:
-                        last_error_message = f"{attempt_mode} returned HTTP 401"
-                    else:
-                        last_error_message = f"{attempt_mode} returned HTTP {me_resp.status_code}"
-                except Exception as exc:
-                    raw_summary[f"auth_me_{attempt_mode}"] = {
-                        "error": str(exc),
-                    }
-                    last_error_message = str(exc)
-
-            if selected_headers is None:
-                hint = "请重新获取登录态。"
-                if session_cookie:
-                    hint = "auth_token 和 session_cookie 都失效了，请重新登录后获取新的登录态。"
-                return {
-                    "status": "error",
-                    "adapter": adapter,
-                    "message": f"后台登录态无效：{last_error_message or 'HTTP 401'} {hint}".strip(),
-                    "raw_summary": raw_summary,
+                    me_body = me_resp.json()
+                except Exception:
+                    me_body = {"raw_text": me_resp.text[:500]}
+                raw_summary[f"auth_me_{attempt_mode}"] = {
+                    "status_code": me_resp.status_code,
+                    "body": me_body,
                 }
-            headers = selected_headers
-            raw_summary["auth_mode"] = auth_mode
+                if me_resp.status_code < 400:
+                    auth_mode = attempt_mode
+                    selected_headers = attempt_headers
+                    user_id = extract_portal_user_id(normalize_portal_data(me_body))
+                    break
+                last_error_message = f"{attempt_mode} returned HTTP {me_resp.status_code}"
+            except Exception as exc:
+                raw_summary[f"auth_me_{attempt_mode}"] = {"error": str(exc)}
+                last_error_message = str(exc)
+
+        if selected_headers is None:
+            hint = "请重新获取登录态。"
+            if session_cookie:
+                hint = "auth_token 和 session_cookie 都失效了，请重新登录后获取新的登录态。"
+            return {
+                "status": "error",
+                "adapter": adapter,
+                "message": f"后台登录态无效：{last_error_message or 'HTTP 401'} {hint}".strip(),
+                "raw_summary": raw_summary,
+            }
+        headers = selected_headers
+        raw_summary["auth_mode"] = auth_mode
 
         endpoint_specs: list[tuple[str, str, dict[str, Any] | None]] = [
             ("subscriptions_summary", "/api/v1/subscriptions/summary", None),
@@ -1704,14 +2570,32 @@ def probe_portal_quota(profile: dict[str, Any]) -> dict[str, Any]:
     snapshot = extract_balance_snapshot_from_payloads(payloads, default_currency)
     status = "ok" if any(snapshot.get(key) is not None for key in ("balance_total", "balance_used", "balance_remaining")) else "unsupported"
     message = "" if status == "ok" else "接口可访问，但暂未识别出统一的余额字段。可以继续根据该站点真实返回结构做专门适配。"
-    if auth_mode == "admin_api_key" and not configured_user_id:
-        message = "admin key 模式下建议同时填写 user_id，否则很多用户级余额接口无法调用。"
-        status = "unsupported"
-
+    quota_items = extract_subscription_quota_items(payloads, default_currency)
+    if quota_items and status == "unsupported":
+        status = "ok"
+        message = ""
+    if any(snapshot.get(key) is not None for key in ("balance_total", "balance_used", "balance_remaining")):
+        quota_items.insert(
+            0,
+            {
+                "id": "balance",
+                "type": billing_mode,
+                "label": "按量余额" if billing_mode == "balance" else "套餐额度",
+                "currency": snapshot.get("currency") or default_currency,
+                "balance_total": snapshot.get("balance_total"),
+                "balance_used": snapshot.get("balance_used"),
+                "balance_remaining": snapshot.get("balance_remaining"),
+                "period_start": snapshot.get("period_start"),
+                "period_end": snapshot.get("period_end"),
+                "source": adapter,
+            },
+        )
     return {
         "status": status,
         "adapter": adapter,
         "message": message,
+        "billing_mode": billing_mode,
+        "quota_items": quota_items,
         "user_id": user_id,
         "raw_summary": raw_summary,
         **snapshot,
@@ -1881,7 +2765,7 @@ def sync_supplier_orders_from_portal(
             "items": [],
         }
 
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
+    with supplier_http_client(timeout=20) as client:
         payload, trace = request_portal_json_with_fallback(
             client,
             profile,
@@ -1972,13 +2856,24 @@ def save_management_state_profile_quota_fields(
 ) -> None:
     management_state = load_management_state()
     api_profiles = list(management_state.get("api_profiles", []))
+    suppliers_by_id = {
+        str(item.get("id") or ""): item
+        for item in management_state.get("suppliers", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    supplier_quotas = ensure_mapping(management_state.get("supplier_quotas"))
     updated = False
     for item in api_profiles:
         if str(item.get("id") or "").strip() != str(profile_id or "").strip():
             continue
-        quota = ensure_mapping(item.get("quota"))
-        quota.update({key: value for key, value in quota_updates.items() if value not in (None, "")})
-        item["quota"] = quota
+        platform_key = supplier_platform_key_for_profile(item, suppliers_by_id)
+        public_updates, credential_updates = split_quota_credentials(quota_updates)
+        if credential_updates:
+            get_credential_vault().merge(platform_key, credential_updates)
+        quota = ensure_mapping(supplier_quotas.get(platform_key))
+        quota.update({key: value for key, value in public_updates.items() if value not in (None, "")})
+        supplier_quotas[platform_key] = quota
+        item["quota"] = {}
         updated = True
         break
     if not updated:
@@ -1992,6 +2887,7 @@ def save_management_state_profile_quota_fields(
         management_state.get("router_settings", {}),
         management_state.get("litellm_settings", {}),
         management_state.get("routing_view_mode", "by_model"),
+        supplier_quotas,
     )
 
 
@@ -1999,6 +2895,7 @@ def repair_portal_login_state(
     profile: dict[str, Any],
     *,
     totp_code: str = "",
+    supplier_key: str = "",
 ) -> dict[str, Any]:
     quota = ensure_mapping(profile.get("quota"))
     portal_base = portal_base_for_profile(profile)
@@ -2016,7 +2913,7 @@ def repair_portal_login_state(
             "message": "请先填写登录邮箱和登录密码，再执行自动登录修复。",
         }
 
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
+    with supplier_http_client(timeout=20) as client:
         public_settings_url = f"{portal_base}/api/v1/settings/public"
         public_settings_resp = client.get(public_settings_url, headers={"Accept": "application/json"})
         public_settings_body: dict[str, Any]
@@ -2151,9 +3048,12 @@ def repair_portal_login_state(
         }
         if refresh_token:
             quota_updates["refresh_token"] = refresh_token
-        save_management_state_profile_quota_fields(str(profile.get("id") or ""), quota_updates)
+        if supplier_key:
+            get_credential_vault().merge(supplier_key, quota_updates)
+        else:
+            save_management_state_profile_quota_fields(str(profile.get("id") or ""), quota_updates)
 
-        return {
+        result = {
             "ok": True,
             "message": "自动登录修复完成，已更新 auth_token / session_cookie。",
             "updated": {
@@ -2172,37 +3072,76 @@ def repair_portal_login_state(
                 },
             },
         }
+        return redact_sensitive_data(result, list(quota_updates.values()))
 
 
-def refresh_balances_v2(payload: "BalanceRefreshPayload") -> dict[str, Any]:
+def portal_probe_requires_browser_renewal(probe: dict[str, Any] | None) -> bool:
+    status = str(ensure_mapping(probe).get("status") or "").strip().lower()
+    message = str(ensure_mapping(probe).get("message") or "").strip().lower()
+    if status not in {"error", "unsupported", "auth_required"}:
+        return False
+    auth_markers = ("401", "403", "unauthorized", "forbidden", "token expired", "jwt expired", "登录已失效", "令牌已过期")
+    return any(marker in message for marker in auth_markers)
+
+
+def renew_supplier_sso_silently(
+    supplier_key: str,
+    portal_base: str,
+    *,
+    adapter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _supplier_sso_manager.run_silent(
+        supplier_key,
+        portal_base,
+        timeout_seconds=45,
+        adapter=adapter,
+    )
+
+
+def refresh_balances_v2(
+    payload: "BalanceRefreshPayload",
+    *,
+    silent_sso_refresher: Any | None = None,
+) -> dict[str, Any]:
     management_state = load_management_state()
-    profiles = [item for item in management_state.get("api_profiles", []) if isinstance(item, dict)]
-    if payload.api_profile_ids:
-        allowed = set(payload.api_profile_ids)
-        profiles = [item for item in profiles if item.get("id") in allowed]
-
+    allowed_profile_ids = set(payload.api_profile_ids) if payload.api_profile_ids else None
+    targets = supplier_quota_targets(management_state, allowed_profile_ids)
     store = get_usage_quota_store()
+    vault = get_credential_vault()
+    sso_refresher = silent_sso_refresher or renew_supplier_sso_silently
     results: list[dict[str, Any]] = []
 
-    for profile in profiles:
-        quota = ensure_mapping(profile.get("quota"))
+    for target in targets:
+        platform_key = str(target.get("platform_key") or "")
+        profile = copy.deepcopy(target.get("representative_profile") or {})
+        quota = ensure_mapping(target.get("quota"))
+        browser_sso_adapter = browser_sso_adapter_for_target(target)
+        if not bool(quota.get("enabled", False)) and not payload.force:
+            results.append(
+                {
+                    "supplier_key": platform_key,
+                    "api_profile_ids": [item.get("id") for item in target.get("profiles", [])],
+                    "label": platform_key,
+                    "status": "disabled",
+                    "source": "supplier",
+                    "adapter": str(quota.get("adapter") or "unsupported"),
+                    "message": "该供应商的自动额度监控已关闭。",
+                }
+            )
+            continue
+        try:
+            credentials = vault.get(platform_key)
+        except Exception as exc:
+            credentials = {}
+            logger.warning("supplier credential vault read failed for %s: %s", platform_key, exc)
+        quota = {**quota, **credentials}
+        profile["quota"] = quota
         adapter = effective_quota_adapter(profile)
         snapshot_adapter = adapter
         currency = str(quota.get("currency") or "CNY")
         auto_probe: dict[str, Any] | None = None
-        provider_name = normalize_provider_name(profile.get("custom_llm_provider"))
-        can_probe_openai_compatible = (
-            provider_name == "openai"
-            and str(profile.get("api_key_value") or "").strip()
-            and str(profile.get("api_base") or "").strip()
-        )
-        should_probe_openai_compatible = adapter in {"openai-compatible", "openai_compatible_balance", "provider_api"} or (
-            adapter == "manual"
-            and can_probe_openai_compatible
-            and not quota_has_manual_values(quota)
-        )
 
-        if adapter in {"custom-script", "custom_script", "script"}:
+        if adapter == "custom-script":
             auto_probe = probe_custom_quota_script(profile)
             snapshot_adapter = str(auto_probe.get("adapter") or "custom-script")
             limit = auto_probe.get("balance_total")
@@ -2211,17 +3150,59 @@ def refresh_balances_v2(payload: "BalanceRefreshPayload") -> dict[str, Any]:
             currency = str(auto_probe.get("currency") or currency)
             status = str(auto_probe.get("status") or "unsupported")
             message = str(auto_probe.get("message") or "")
-        elif should_probe_openai_compatible:
-            auto_probe = probe_openai_compatible_balance(profile)
-            snapshot_adapter = str(auto_probe.get("adapter") or "openai_compatible_balance")
-            limit = auto_probe.get("balance_total")
-            current_balance = auto_probe.get("balance_remaining")
-            used_amount = auto_probe.get("balance_used")
-            currency = str(auto_probe.get("currency") or currency)
-            status = str(auto_probe.get("status") or "unsupported")
-            message = str(auto_probe.get("message") or "")
-        elif adapter in {"lingsuan-web", "lingsuan-admin", "autocode-web", "autocode-admin", "portal_web_token", "portal_admin_key"}:
+        elif adapter in {"lingsuan-web", "autocode-web"}:
+            web_adapters = {"lingsuan-web", "autocode-web"}
+            login_result: dict[str, Any] | None = None
+            if False and (
+                adapter in web_adapters
+                and not str(quota.get("auth_token") or "").strip()
+                and not str(quota.get("session_cookie") or "").strip()
+                and str(quota.get("login_email") or "").strip()
+                and str(quota.get("login_password") or "").strip()
+            ):
+                login_result = repair_portal_login_state(profile, supplier_key=platform_key)
+                if login_result.get("ok"):
+                    credentials = vault.get(platform_key)
+                    quota = {**ensure_mapping(target.get("quota")), **credentials}
+                    profile["quota"] = quota
+
             auto_probe = probe_portal_quota(profile)
+            probe_message = str(auto_probe.get("message") or "").lower()
+            should_retry_login = False and (
+                adapter in web_adapters
+                and not (login_result or {}).get("ok")
+                and str(quota.get("login_email") or "").strip()
+                and str(quota.get("login_password") or "").strip()
+                and ("401" in probe_message or "login" in probe_message or "auth" in probe_message)
+            )
+            if should_retry_login:
+                login_result = repair_portal_login_state(profile, supplier_key=platform_key)
+                if login_result.get("ok"):
+                    credentials = vault.get(platform_key)
+                    quota = {**ensure_mapping(target.get("quota")), **credentials}
+                    profile["quota"] = quota
+                    auto_probe = probe_portal_quota(profile)
+                elif auto_probe.get("status") in {"unsupported", "error"}:
+                    auto_probe["message"] = str(login_result.get("message") or auto_probe.get("message") or "登录态修复失败")
+            if browser_sso_adapter and portal_probe_requires_browser_renewal(auto_probe):
+                sso_result = ensure_mapping(
+                    sso_refresher(
+                        platform_key,
+                        str(
+                            quota.get("portal_base")
+                            or browser_sso_adapter.get("portal_base")
+                            or f"https://{platform_key}"
+                        ).strip().rstrip("/"),
+                        adapter=browser_sso_adapter,
+                    )
+                )
+                if str(sso_result.get("status") or "") == "authenticated":
+                    credentials = vault.get(platform_key)
+                    quota = {**ensure_mapping(target.get("quota")), **credentials}
+                    profile["quota"] = quota
+                    auto_probe = probe_portal_quota(profile)
+                elif bool(sso_result.get("requires_interaction")):
+                    auto_probe["message"] = str(sso_result.get("message") or "浏览器会话需要重新授权。")
             snapshot_adapter = str(auto_probe.get("adapter") or adapter)
             limit = auto_probe.get("balance_total")
             current_balance = auto_probe.get("balance_remaining")
@@ -2230,49 +3211,155 @@ def refresh_balances_v2(payload: "BalanceRefreshPayload") -> dict[str, Any]:
             status = str(auto_probe.get("status") or "unsupported")
             message = str(auto_probe.get("message") or "")
         else:
-            limit = quota.get("limit")
-            current_balance = quota.get("current_balance")
-            used_amount = quota.get("used_amount")
-            if current_balance in (None, "") and limit not in (None, "") and used_amount not in (None, ""):
-                current_balance = float(limit) - float(used_amount)
-            if used_amount in (None, "") and limit not in (None, "") and current_balance not in (None, ""):
-                used_amount = float(limit) - float(current_balance)
-            status = "ok" if limit not in (None, "") or current_balance not in (None, "") else "unsupported"
-            message = "" if status == "ok" else "尚未配置可刷新的额度数据，当前仅支持手动额度。"
+            auto_probe = {
+                "status": "unsupported",
+                "adapter": "unsupported",
+                "message": f"供应商 {platform_key} 暂未安装额度适配器。",
+                "raw_summary": {"platform_key": platform_key},
+            }
+            snapshot_adapter = "unsupported"
+            limit = None
+            current_balance = None
+            used_amount = None
+            status = "unsupported"
+            message = str(auto_probe["message"])
+
+        credential_updates = ensure_mapping((auto_probe or {}).get("credential_updates"))
+        scoped_updates = {
+            key: value
+            for key, value in credential_updates.items()
+            if key in SENSITIVE_QUOTA_CREDENTIAL_FIELDS and value not in (None, "")
+        }
+        if scoped_updates:
+            try:
+                vault.merge(platform_key, scoped_updates)
+            except Exception as exc:
+                logger.warning("supplier credential vault update failed for %s: %s", platform_key, exc)
+
+        pricing_processing: list[dict[str, Any]] = []
+        pricing_catalog = [
+            item
+            for item in ensure_list((auto_probe or {}).get("pricing_catalog"))
+            if isinstance(item, dict)
+        ]
+        if pricing_catalog:
+            profiles_by_id = {
+                str(item.get("id") or ""): item
+                for item in target.get("profiles", [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            default_profile_id = str(profile.get("id") or "")
+            for pricing_observation in pricing_catalog:
+                observation_profile_id = str(
+                    pricing_observation.get("api_profile_id") or default_profile_id
+                ).strip()
+                observation_profile = profiles_by_id.get(observation_profile_id)
+                if not observation_profile:
+                    continue
+                pricing_processing.append(
+                    process_pricing_observations(
+                        platform_key,
+                        observation_profile,
+                        [pricing_observation],
+                        automation_mode=str(quota.get("pricing_automation") or "detect-confirm"),
+                        store=store,
+                    )
+                )
+
+        requested_billing_mode = normalize_billing_mode(
+            (auto_probe or {}).get("billing_mode") or quota.get("billing_mode")
+        )
+        previous_snapshot = None
+        raw_quota_items = parse_quota_items((auto_probe or {}).get("quota_items"))
+        if current_balance not in (None, "") or raw_quota_items:
+            provider_key = str(target.get("provider_key") or supplier_platform_provider_key(platform_key))
+            previous_snapshot = next(
+                (
+                    item
+                    for item in store.list_provider_balance_snapshots(limit=200, provider_key=provider_key)
+                    if str(item.get("status") or "") == "ok"
+                    and item.get("balance_remaining") not in (None, "")
+                ),
+                None,
+            )
+        fallback_snapshot = {
+            "billing_mode": requested_billing_mode,
+            "balance_total": limit,
+            "balance_used": used_amount,
+            "balance_remaining": current_balance,
+            "currency": currency,
+            "period_start": str((auto_probe or {}).get("period_start") or quota.get("period_start") or ""),
+            "period_end": str((auto_probe or {}).get("period_end") or quota.get("period_end") or ""),
+        }
+        quota_items = normalize_quota_items(
+            raw_quota_items,
+            fallback_snapshot=fallback_snapshot,
+            previous_snapshot=previous_snapshot,
+        )
+        primary_item = next((item for item in quota_items if item.get("type") == "balance"), quota_items[0])
+        item_types = {str(item.get("type") or "balance") for item in quota_items}
+        billing_mode = "mixed" if len(item_types) > 1 else normalize_billing_mode(next(iter(item_types), requested_billing_mode))
+        limit = primary_item.get("balance_total")
+        used_amount = primary_item.get("balance_used")
+        current_balance = primary_item.get("balance_remaining")
+        period_start = primary_item.get("period_start") or ""
+        period_end = primary_item.get("period_end") or ""
+
+        snapshot_raw_summary = (
+            {
+                "message": str(auto_probe.get("message") or ""),
+                "status": str(auto_probe.get("status") or status),
+                "adapter": str(auto_probe.get("adapter") or snapshot_adapter),
+                "billing_mode": billing_mode,
+                "quota_items": quota_items,
+                "raw_summary": auto_probe.get("raw_summary"),
+                "pricing_processing": pricing_processing,
+            }
+            if auto_probe is not None
+            else {"source": "supplier-adapter", "force": payload.force}
+        )
+        snapshot_raw_summary = redact_sensitive_data(snapshot_raw_summary, list(credentials.values()))
+
+        provider_key = str(target.get("provider_key") or supplier_platform_provider_key(platform_key))
+        recharge_event = None
+        recharge_event_created = False
+        previous_remaining = numeric_value((previous_snapshot or {}).get("balance_remaining"))
+        current_remaining_value = numeric_value(current_balance)
+        if status == "ok" and previous_remaining is not None and current_remaining_value is not None:
+            recharge_event, recharge_event_created = store.record_balance_increase(
+                provider_key=provider_key,
+                relay_label=platform_key,
+                previous_balance=previous_remaining,
+                current_balance=current_remaining_value,
+                currency=currency,
+                detected_at=now_iso_local(),
+                previous_checked_at=str((previous_snapshot or {}).get("checked_at") or ""),
+            )
 
         snapshot = store.insert_provider_balance_snapshot(
             {
-                "provider_key": profile_provider_key(profile),
-                "relay_label": str(profile.get("label") or ""),
-                "api_key_env": str(profile.get("api_key_env") or ""),
+                "provider_key": provider_key,
+                "relay_label": platform_key,
+                "api_key_env": "",
                 "adapter": snapshot_adapter,
                 "status": status,
                 "currency": currency,
                 "balance_total": float(limit) if limit not in (None, "") else None,
                 "balance_used": float(used_amount) if used_amount not in (None, "") else None,
                 "balance_remaining": float(current_balance) if current_balance not in (None, "") else None,
-                "period_start": str(quota.get("period_start") or ""),
-                "period_end": str(quota.get("period_end") or ""),
-                "raw_summary": (
-                    {
-                        "message": str(auto_probe.get("message") or ""),
-                        "status": str(auto_probe.get("status") or status),
-                        "adapter": str(auto_probe.get("adapter") or snapshot_adapter),
-                        "raw_summary": auto_probe.get("raw_summary"),
-                    }
-                    if auto_probe is not None
-                    else {
-                        "source": "manual-quota-config",
-                        "force": payload.force,
-                    }
-                ),
+                "billing_mode": billing_mode,
+                "quota_items": quota_items,
+                "period_start": period_start,
+                "period_end": period_end,
+                "raw_summary": snapshot_raw_summary,
             }
         )
 
         results.append(
             {
-                "api_profile_id": profile.get("id"),
-                "label": profile.get("label"),
+                "supplier_key": platform_key,
+                "api_profile_ids": [item.get("id") for item in target.get("profiles", [])],
+                "label": platform_key,
                 "status": status,
                 "source": "auto" if auto_probe is not None else "manual",
                 "adapter": snapshot_adapter,
@@ -2280,10 +3367,15 @@ def refresh_balances_v2(payload: "BalanceRefreshPayload") -> dict[str, Any]:
                 "balance_total": snapshot.get("balance_total"),
                 "balance_used": snapshot.get("balance_used"),
                 "balance_remaining": snapshot.get("balance_remaining"),
+                "billing_mode": snapshot.get("billing_mode"),
+                "quota_items": quota_items,
                 "period_start": snapshot.get("period_start"),
                 "period_end": snapshot.get("period_end"),
                 "checked_at": snapshot.get("checked_at"),
                 "message": message,
+                "pricing_processing": pricing_processing,
+                "recharge_event": recharge_event,
+                "recharge_event_created": recharge_event_created,
             }
         )
 
@@ -2299,13 +3391,22 @@ def model_name_for_direct_request(upstream_model: str, custom_llm_provider: str 
     return upstream_model
 
 
+def anthropic_endpoint_url(api_base: str, endpoint: str) -> str:
+    """Build an Anthropic endpoint without duplicating an existing /v1 prefix."""
+    base = str(api_base or "").strip().rstrip("/")
+    suffix = str(endpoint or "").strip().lstrip("/")
+    if base.lower().endswith("/v1"):
+        return f"{base}/{suffix}"
+    return f"{base}/v1/{suffix}"
+
+
 def provider_models_probe(provider: dict[str, Any], env_map: dict[str, str]) -> tuple[str, dict[str, str]]:
     provider_name = normalize_provider_name(provider.get("custom_llm_provider"))
     api_base = resolve_provider_api_base(provider.get("api_base"), provider_name)
     api_key = env_map.get(provider.get("api_key_env", ""), "").strip()
     if provider_name == "anthropic":
         return (
-            f"{api_base}/v1/models",
+            anthropic_endpoint_url(api_base, "models"),
             {
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
@@ -2331,7 +3432,7 @@ def build_direct_request(
     model_name = model_name_for_direct_request(upstream_model, provider_name)
     if provider_name == "anthropic":
         return (
-            f"{api_base}/v1/messages",
+            anthropic_endpoint_url(api_base, "messages"),
             {
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
@@ -2610,6 +3711,10 @@ def normalize_model_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if route_id in seen:
             route_id = make_stable_id("route", route_id, index)
         seen.add(route_id)
+        legacy_gateway_enabled = row.get("gateway_enabled")
+        if legacy_gateway_enabled is None and "expose_in_gateway" not in row:
+            # Existing state predates the publish flag and was already exposed by LiteLLM.
+            legacy_gateway_enabled = True
         items.append(
             {
                 **row,
@@ -2619,9 +3724,32 @@ def normalize_model_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "model_family": str(row.get("model_family") or row.get("category") or guess_model_family(public_model_name)).strip(),
                 "routing_strategy": str(row.get("routing_strategy") or "simple-shuffle").strip(),
                 "enabled": bool(row.get("enabled", True)),
+                # Only explicitly published public models are exposed by the gateway.
+                "gateway_enabled": bool(row.get("gateway_enabled", row.get("expose_in_gateway", legacy_gateway_enabled))),
             }
         )
     return items
+
+
+def migrate_gateway_publish_flags(model_routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if any(bool(item.get("gateway_enabled", False)) for item in model_routes):
+        return model_routes
+    try:
+        legacy_config = load_config()
+    except Exception:
+        return model_routes
+    published_names = {
+        str((row.get("model_info") or {}).get("public_model_name") or row.get("model_name") or "").strip()
+        for row in ensure_list(legacy_config.get("model_list"))
+        if isinstance(row, dict)
+    }
+    published_names.discard("")
+    if not published_names:
+        return model_routes
+    for route in model_routes:
+        if str(route.get("public_model_name") or "").strip() in published_names:
+            route["gateway_enabled"] = True
+    return model_routes
 
 
 def normalize_route_bindings(
@@ -2753,6 +3881,7 @@ def management_state_from_providers(
         "routing_view_mode": routing_view_mode or "by_model",
         "suppliers": normalize_suppliers(suppliers),
         "api_profiles": normalize_api_profiles(api_profiles, normalize_suppliers(suppliers)),
+        "supplier_quotas": {},
         "model_routes": normalized_model_routes,
         "route_bindings": normalize_route_bindings(route_bindings, normalize_api_profiles(api_profiles, normalize_suppliers(suppliers)), normalized_model_routes),
         "model_families": normalized_model_families,
@@ -2766,6 +3895,7 @@ def flatten_management_state_to_providers(
     api_profiles: list[dict[str, Any]],
     model_routes: list[dict[str, Any]],
     route_bindings: list[dict[str, Any]],
+    include_unpublished: bool = False,
 ) -> list[dict[str, Any]]:
     supplier_map = {item["id"]: item for item in suppliers}
     api_profile_map = {item["id"]: item for item in api_profiles}
@@ -2776,6 +3906,8 @@ def flatten_management_state_to_providers(
         route = route_map.get(str(binding.get("model_route_id", "")).strip())
         api_profile = api_profile_map.get(str(binding.get("api_profile_id", "")).strip())
         if not route or not api_profile:
+            continue
+        if not include_unpublished and not bool(route.get("gateway_enabled", False)):
             continue
         supplier = supplier_map.get(str(api_profile.get("supplier_id", "")).strip(), {})
         relay_label = str(api_profile.get("label") or supplier.get("label") or supplier.get("name") or "").strip()
@@ -2796,7 +3928,13 @@ def flatten_management_state_to_providers(
                 "rpm": int(binding["rpm"]) if binding.get("rpm") not in ("", None) else None,
                 "priority": int(binding.get("priority", 100) or 100),
                 "enabled": bool(binding.get("enabled", True)) and bool(route.get("enabled", True)) and bool(api_profile.get("enabled", True)),
+                "gateway_enabled": bool(route.get("gateway_enabled", False)),
                 "known_models": ensure_list(api_profile.get("known_models")),
+                "platform_key": supplier_platform_key(api_profile.get("api_base"), supplier.get("name")),
+                "cost_provider_key": supplier_provider_key(
+                    supplier.get("id"),
+                    api_profile.get("custom_llm_provider"),
+                ),
             }
         )
     return providers
@@ -2805,6 +3943,11 @@ def flatten_management_state_to_providers(
 def load_management_state() -> dict[str, Any]:
     if STATE_PATH.exists():
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        state, quota_state_changed = migrate_legacy_supplier_quota_state(state)
+        if quota_state_changed:
+            migration_path = STATE_PATH.with_suffix(STATE_PATH.suffix + ".migrating")
+            migration_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(migration_path, STATE_PATH)
         if any(key in state for key in ("suppliers", "api_profiles", "model_routes", "route_bindings")):
             suppliers = normalize_suppliers([item for item in ensure_list(state.get("suppliers")) if isinstance(item, dict)])
             api_profiles = normalize_api_profiles(
@@ -2812,6 +3955,7 @@ def load_management_state() -> dict[str, Any]:
                 suppliers,
             )
             model_routes = normalize_model_routes([item for item in ensure_list(state.get("model_routes")) if isinstance(item, dict)])
+            model_routes = migrate_gateway_publish_flags(model_routes)
             route_bindings = normalize_route_bindings(
                 [item for item in ensure_list(state.get("route_bindings")) if isinstance(item, dict)],
                 api_profiles,
@@ -2821,6 +3965,11 @@ def load_management_state() -> dict[str, Any]:
                 "routing_view_mode": str(state.get("routing_view_mode") or "by_model"),
                 "suppliers": suppliers,
                 "api_profiles": api_profiles,
+                "supplier_quotas": {
+                    str(key): ensure_mapping(value)
+                    for key, value in ensure_mapping(state.get("supplier_quotas")).items()
+                    if str(key).strip()
+                },
                 "model_routes": model_routes,
                 "route_bindings": route_bindings,
                 "model_families": normalize_model_families([
@@ -2868,18 +4017,31 @@ def load_management_state() -> dict[str, Any]:
     )
 
 
+def claude_gateway_model_alias(public_model_name: str) -> str:
+    """Return a Claude Desktop-discoverable route name for a public model."""
+    return f"claude-haiku-relaydeck-{slugify(public_model_name)}"
+
+
 def build_litellm_config_from_providers(
     providers: list[dict[str, Any]],
     router_settings: dict[str, Any],
     litellm_settings: dict[str, Any],
+    model_name_transform: Any = None,
 ) -> dict[str, Any]:
+    discovery_settings = claude_discovery_settings(litellm_settings)
+    transform_model_name = model_name_transform or (lambda model_name: model_name)
     grouped: dict[str, list[dict[str, Any]]] = {}
     for provider in providers:
+        if not bool(provider.get("gateway_enabled", True)):
+            continue
         grouped.setdefault(provider["model_name"], []).append(provider)
 
     model_list: list[dict[str, Any]] = []
     fallbacks: list[dict[str, list[str]]] = []
     for public_model_name, rows in grouped.items():
+        gateway_model_name = str(transform_model_name(public_model_name) or "").strip()
+        if not gateway_model_name:
+            continue
         active_rows = [row for row in rows if row.get("enabled", True)]
         active_rows.sort(key=lambda row: (int(row.get("priority", 100)), row.get("relay_label", "")))
         if not active_rows:
@@ -2888,7 +4050,11 @@ def build_litellm_config_from_providers(
         backup_aliases: list[str] = []
         for idx, provider in enumerate(active_rows):
             relay_slug = slugify(provider.get("relay_label", "")) or f"relay-{idx+1}"
-            alias = public_model_name if idx == 0 else f"{public_model_name}__{idx+1}__{relay_slug}"
+            alias = (
+                gateway_model_name
+                if idx == 0
+                else f"{gateway_model_name}__{idx+1}__{relay_slug}"
+            )
             if idx > 0:
                 backup_aliases.append(alias)
 
@@ -2903,31 +4069,109 @@ def build_litellm_config_from_providers(
             if provider.get("rpm"):
                 params["rpm"] = provider["rpm"]
 
+            platform_key = str(
+                provider.get("platform_key")
+                or supplier_platform_key(provider.get("api_base"), provider.get("supplier_name"))
+            )
+            relaydeck_metadata = {
+                "platform_key": platform_key,
+                "cost_provider_key": str(provider.get("cost_provider_key") or ""),
+                "supplier_id": str(provider.get("supplier_id") or ""),
+                "api_profile_id": str(provider.get("api_profile_id") or ""),
+                "model_route_id": str(provider.get("model_route_id") or ""),
+                "route_binding_id": str(provider.get("binding_id") or ""),
+                "public_model_name": public_model_name,
+                "upstream_model": str(provider.get("upstream_model") or ""),
+                "relay_label": str(provider.get("relay_label") or ""),
+                "api_base_hash": api_base_hash(provider.get("api_base")),
+                "custom_llm_provider": str(provider.get("custom_llm_provider") or "openai"),
+            }
+            discovery_metadata = claude_discovery_metadata(public_model_name, discovery_settings)
+            if discovery_metadata:
+                relaydeck_metadata.update(discovery_metadata)
+            params["metadata"] = {"relaydeck": relaydeck_metadata}
+
+            model_info = {
+                "relay_label": slugify(provider.get("relay_label", "")) or str(provider.get("relay_label", "") or ""),
+                "public_model_name": public_model_name,
+                "platform_key": platform_key,
+                "supplier_id": str(provider.get("supplier_id") or ""),
+                "api_profile_id": str(provider.get("api_profile_id") or ""),
+                "model_route_id": str(provider.get("model_route_id") or ""),
+                "route_binding_id": str(provider.get("binding_id") or ""),
+                "relaydeck": relaydeck_metadata,
+                "priority": int(provider.get("priority", 100)),
+                "enabled": bool(provider.get("enabled", True)),
+            }
+            model_info.update(discovery_metadata)
+
             model_list.append(
                 {
                     "model_name": alias,
                     "litellm_params": params,
-                    "model_info": {
-                        "relay_label": slugify(provider.get("relay_label", "")) or str(provider.get("relay_label", "") or ""),
-                        "public_model_name": public_model_name,
-                        "priority": int(provider.get("priority", 100)),
-                        "enabled": bool(provider.get("enabled", True)),
-                    },
+                    "model_info": model_info,
                 }
             )
 
         if backup_aliases:
-            fallbacks.append({public_model_name: backup_aliases})
+            fallbacks.append({gateway_model_name: backup_aliases})
 
     next_router = dict(router_settings or {})
     next_router["fallbacks"] = fallbacks
     next_router.pop("model_group_alias", None)
 
+    next_litellm_settings = dict(litellm_settings or {})
+    next_litellm_settings.pop(CLAUDE_DISCOVERY_SETTINGS_KEY, None)
+    callback_path = "relaydeck_callback.proxy_handler_instance"
+    legacy_callback_paths = {
+        "relaydeck_litellm_callback.proxy_handler_instance",
+        callback_path,
+    }
+    for callback_key in ("success_callback", "failure_callback"):
+        existing = next_litellm_settings.get(callback_key)
+        if isinstance(existing, str):
+            existing = [existing]
+        if isinstance(existing, list):
+            existing = [item for item in existing if item not in legacy_callback_paths]
+            if existing:
+                next_litellm_settings[callback_key] = existing
+            else:
+                next_litellm_settings.pop(callback_key, None)
+    callbacks = next_litellm_settings.get("callbacks")
+    if isinstance(callbacks, str):
+        callbacks = [callbacks]
+    elif not isinstance(callbacks, list):
+        callbacks = []
+    callbacks = [item for item in callbacks if item not in legacy_callback_paths]
+    callbacks.append(callback_path)
+    next_litellm_settings["callbacks"] = callbacks
+
     return {
         "model_list": model_list,
         "router_settings": next_router,
-        "litellm_settings": litellm_settings or {},
+        "litellm_settings": next_litellm_settings,
         "general_settings": {"master_key": "os.environ/LITELLM_MASTER_KEY"},
+    }
+
+
+def build_litellm_gateway_configs_from_providers(
+    providers: list[dict[str, Any]],
+    router_settings: dict[str, Any],
+    litellm_settings: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Build client-isolated views from the same public routing state."""
+    return {
+        "openai": build_litellm_config_from_providers(
+            providers,
+            router_settings,
+            litellm_settings,
+        ),
+        "claude": build_litellm_config_from_providers(
+            providers,
+            router_settings,
+            litellm_settings,
+            claude_gateway_model_alias,
+        ),
     }
 
 
@@ -2954,6 +4198,7 @@ def save_management_state(
     router_settings: dict[str, Any],
     litellm_settings: dict[str, Any],
     routing_view_mode: str = "by_model",
+    supplier_quotas: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     normalized_suppliers = normalize_suppliers(suppliers)
     normalized_api_profiles = normalize_api_profiles(api_profiles, normalized_suppliers)
@@ -2964,6 +4209,18 @@ def save_management_state(
         *[item.get("model_family", "") for item in normalized_model_routes],
     ])
     normalized_route_bindings = normalize_route_bindings(route_bindings, normalized_api_profiles, normalized_model_routes)
+    if supplier_quotas is None:
+        supplier_quotas = {}
+        if STATE_PATH.exists():
+            try:
+                supplier_quotas = ensure_mapping(json.loads(STATE_PATH.read_text(encoding="utf-8")).get("supplier_quotas"))
+            except Exception:
+                supplier_quotas = {}
+    normalized_supplier_quotas = {
+        str(key).strip().lower(): split_quota_credentials(ensure_mapping(value))[0]
+        for key, value in ensure_mapping(supplier_quotas).items()
+        if str(key).strip()
+    }
     providers = flatten_management_state_to_providers(
         normalized_suppliers,
         normalized_api_profiles,
@@ -2977,6 +4234,7 @@ def save_management_state(
                 "routing_view_mode": routing_view_mode or "by_model",
                 "suppliers": normalized_suppliers,
                 "api_profiles": normalized_api_profiles,
+                "supplier_quotas": normalized_supplier_quotas,
                 "model_routes": normalized_model_routes,
                 "route_bindings": normalized_route_bindings,
                 "model_families": normalized_model_families,
@@ -3025,6 +4283,18 @@ def build_litellm_config_from_management_state(
 ) -> dict[str, Any]:
     providers = flatten_management_state_to_providers(suppliers, api_profiles, model_routes, route_bindings)
     return build_litellm_config_from_providers(providers, router_settings, litellm_settings)
+
+
+def build_litellm_gateway_configs_from_management_state(
+    suppliers: list[dict[str, Any]],
+    api_profiles: list[dict[str, Any]],
+    model_routes: list[dict[str, Any]],
+    route_bindings: list[dict[str, Any]],
+    router_settings: dict[str, Any],
+    litellm_settings: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    providers = flatten_management_state_to_providers(suppliers, api_profiles, model_routes, route_bindings)
+    return build_litellm_gateway_configs_from_providers(providers, router_settings, litellm_settings)
 
 
 def extract_ccswitch_provider_candidates() -> list[dict[str, Any]]:
@@ -3209,9 +4479,34 @@ def run_powershell_script(script_name: str) -> dict[str, str]:
 
 
 def restart_litellm() -> None:
-    stop_processes_by_target(target=LITELLM_EXE, command_pattern="litellm")
+    run_powershell_script("stop-litellm.ps1")
     time.sleep(1)
     run_powershell_script("start-litellm.ps1")
+
+
+def control_service(service_name: str, action: str) -> dict[str, Any]:
+    if service_name == "litellm":
+        target, command_pattern, start_script = LITELLM_EXE, "litellm", "start-litellm.ps1"
+    elif service_name == "open-webui":
+        target, command_pattern, start_script = OPEN_WEBUI_EXE, "open-webui", "start-open-webui.ps1"
+    else:
+        raise ValueError(f"不支持控制服务：{service_name}")
+
+    if action == "start":
+        return run_powershell_script(start_script)
+    if action == "stop":
+        if service_name == "litellm":
+            return run_powershell_script("stop-litellm.ps1")
+        stop_processes_by_target(target=target, command_pattern=command_pattern)
+        return {"stdout": f"已停止 {service_name}", "stderr": ""}
+    if action == "restart":
+        if service_name == "litellm":
+            restart_litellm()
+            return {"stdout": f"宸查噸啟 {service_name}", "stderr": ""}
+        stop_processes_by_target(target=target, command_pattern=command_pattern)
+        time.sleep(1)
+        return run_powershell_script(start_script)
+    raise ValueError(f"不支持服务操作：{action}")
 
 
 class ProviderRow(BaseModel):
@@ -3262,6 +4557,7 @@ class ModelRouteRow(BaseModel):
     model_family: str = ""
     routing_strategy: str = "simple-shuffle"
     enabled: bool = True
+    gateway_enabled: bool = False
 
 
 class RouteBindingRow(BaseModel):
@@ -3293,6 +4589,7 @@ class ConfigPayload(BaseModel):
     providers: list[ProviderRow] = Field(default_factory=list)
     suppliers: list[SupplierRow] = Field(default_factory=list)
     api_profiles: list[APIProfileRow] = Field(default_factory=list)
+    supplier_quotas: dict[str, dict[str, Any]] = Field(default_factory=dict)
     model_routes: list[ModelRouteRow] = Field(default_factory=list)
     route_bindings: list[RouteBindingRow] = Field(default_factory=list)
     model_families: list[str] = Field(default_factory=list)
@@ -3307,6 +4604,7 @@ class RoutingDraftPayload(BaseModel):
     model_config = {"extra": "allow"}
     suppliers: list[SupplierRow] = Field(default_factory=list)
     api_profiles: list[APIProfileRow] = Field(default_factory=list)
+    supplier_quotas: dict[str, dict[str, Any]] = Field(default_factory=dict)
     model_routes: list[ModelRouteRow] = Field(default_factory=list)
     route_bindings: list[RouteBindingRow] = Field(default_factory=list)
     model_families: list[str] = Field(default_factory=list)
@@ -3395,6 +4693,10 @@ class RechargeRecordPayload(BaseModel):
     bonus_amount: float | None = None
     bonus_currency: str | None = None
     balance_after_recharge: float | None = None
+    billing_type: str = "topup"
+    service_start: str = ""
+    service_end: str = ""
+    allocation_mode: str = ""
     note: str | None = None
 
 
@@ -3406,6 +4708,31 @@ class SupplierOrderSyncPayload(BaseModel):
 class PortalLoginRepairPayload(BaseModel):
     api_profile: APIProfileCheckRow
     totp_code: str = ""
+
+
+class SupplierCredentialPayload(BaseModel):
+    credentials: dict[str, str] = Field(default_factory=dict)
+    remove_fields: list[str] = Field(default_factory=list)
+
+
+class SupplierLoginRepairPayload(BaseModel):
+    totp_code: str = ""
+
+
+class SupplierPricingConfigPayload(BaseModel):
+    automation_mode: str = "detect-confirm"
+
+
+class PricingVersionPayload(BaseModel):
+    api_profile_id: str
+    upstream_model: str = "*"
+    group_name: str = ""
+    base_input_per_1m: float = 0
+    base_output_per_1m: float = 0
+    multiplier: float = 1
+    currency: str = "USD"
+    effective_from: str = ""
+    note: str = ""
 
 
 for model_cls in (
@@ -3425,6 +4752,8 @@ for model_cls in (
     RechargeRecordPayload,
     SupplierOrderSyncPayload,
     PortalLoginRepairPayload,
+    SupplierCredentialPayload,
+    SupplierLoginRepairPayload,
 ):
     model_cls.model_rebuild()
 
@@ -3437,9 +4766,33 @@ _balance_refresh_stop_event = threading.Event()
 _balance_refresh_thread: threading.Thread | None = None
 
 
+def store_supplier_sso_credentials(
+    supplier_key: str,
+    credentials: dict[str, Any],
+    *,
+    vault: CredentialVault | Any | None = None,
+) -> dict[str, Any]:
+    allowed_fields = {"auth_token", "refresh_token", "session_cookie"}
+    updates = {
+        str(key): str(value)
+        for key, value in ensure_mapping(credentials).items()
+        if str(key) in allowed_fields and value not in (None, "")
+    }
+    if not updates:
+        raise ValueError("Browser SSO did not return supplier credentials")
+    return (vault or get_credential_vault()).merge(str(supplier_key or "").strip().lower(), updates)
+
+
+_supplier_sso_manager = SupplierSsoManager(
+    ROOT / "data" / "browser-sessions",
+    worker=run_supplier_browser_sso,
+    credential_sink=store_supplier_sso_credentials,
+)
+
+
 def refresh_balances_in_background() -> None:
     with _balance_refresh_lock:
-        refresh_balances_v2(BalanceRefreshPayload(force=True))
+        refresh_balances_v2(BalanceRefreshPayload(force=False))
 
 
 def balance_refresh_loop() -> None:
@@ -3483,6 +4836,7 @@ def on_startup() -> None:
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
+    _supplier_sso_manager.mark_active_tasks_interrupted()
     stop_balance_refresh_worker()
 
 
@@ -3500,6 +4854,25 @@ def api_health() -> dict[str, Any]:
     return {"ok": True, "name": "RelayDeck Local Admin"}
 
 
+@app.post("/api/clients/claude-code/configure")
+def api_configure_claude_code() -> dict[str, Any]:
+    env_map = parse_env_file()
+    gateway_key = str(env_map.get("LITELLM_MASTER_KEY") or "").strip()
+    if not gateway_key:
+        raise HTTPException(status_code=400, detail="Missing LITELLM_MASTER_KEY")
+    claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
+    settings_path = Path.home() / ".claude" / "settings.json"
+    try:
+        result = configure_claude_code_settings(
+            settings_path,
+            f"http://127.0.0.1:{claude_port}",
+            gateway_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result, "restart_required": True}
+
+
 @app.get("/api/quota-adapters")
 def api_quota_adapters() -> dict[str, Any]:
     return {
@@ -3507,6 +4880,320 @@ def api_quota_adapters() -> dict[str, Any]:
         "directory": str(ensure_quota_adapters_dir()),
         "items": list_quota_adapter_scripts(),
     }
+
+
+def supplier_quota_public_state(management_state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    suppliers_by_id = {
+        str(item.get("id") or ""): item
+        for item in management_state.get("suppliers", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    configs = {
+        str(key).strip().lower(): split_quota_credentials(ensure_mapping(value))[0]
+        for key, value in ensure_mapping(management_state.get("supplier_quotas")).items()
+        if str(key).strip()
+    }
+    for profile in management_state.get("api_profiles", []):
+        if isinstance(profile, dict):
+            configs.setdefault(supplier_platform_key_for_profile(profile, suppliers_by_id), {})
+    vault = get_credential_vault()
+    pricing_store = get_usage_quota_store()
+    runtime_status = browser_runtime_status()
+    public_state: dict[str, dict[str, Any]] = {}
+    for key, config in configs.items():
+        resolved_config = resolved_supplier_quota_config(key, config)
+        try:
+            credential_status = vault.status(key)
+        except Exception as exc:
+            credential_status = {
+                "supplier_key": key,
+                "configured": False,
+                "configured_fields": [],
+                "updated_at": "",
+                "storage": "windows-dpapi-current-user",
+                "error": str(exc),
+            }
+        public_state[key] = {
+            **resolved_config,
+            "browser_sso": browser_sso_adapter_for_target({"platform_key": key, "quota": resolved_config}) or {},
+            "credential_status": credential_status,
+            "sso_status": _supplier_sso_manager.status(key),
+            "browser_runtime": runtime_status,
+            "pricing_history": {
+                "versions": pricing_store.list_pricing_versions(platform_key=key, limit=200),
+            },
+        }
+    return public_state
+
+
+def known_supplier_platform_keys(management_state: dict[str, Any]) -> set[str]:
+    suppliers_by_id = {
+        str(item.get("id") or ""): item
+        for item in management_state.get("suppliers", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    keys = {
+        str(key).strip().lower()
+        for key in ensure_mapping(management_state.get("supplier_quotas"))
+        if str(key).strip()
+    }
+    for profile in management_state.get("api_profiles", []):
+        if isinstance(profile, dict):
+            keys.add(supplier_platform_key_for_profile(profile, suppliers_by_id))
+    return keys
+
+
+def validate_supplier_platform_key(raw_key: str) -> str:
+    key = str(raw_key or "").strip().lower()
+    if not key or len(key) > 200:
+        raise HTTPException(status_code=400, detail="Invalid supplier platform key")
+    management_state = load_management_state()
+    if key not in known_supplier_platform_keys(management_state):
+        raise HTTPException(status_code=404, detail="Supplier platform not found")
+    return key
+
+
+def profile_for_supplier_platform(
+    management_state: dict[str, Any],
+    platform_key: str,
+    api_profile_id: str,
+) -> dict[str, Any]:
+    suppliers_by_id = {
+        str(item.get("id") or ""): item
+        for item in management_state.get("suppliers", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    profile = next(
+        (
+            item
+            for item in management_state.get("api_profiles", [])
+            if isinstance(item, dict) and str(item.get("id") or "") == str(api_profile_id or "")
+        ),
+        None,
+    )
+    if not profile or supplier_platform_key_for_profile(profile, suppliers_by_id) != platform_key:
+        raise HTTPException(status_code=400, detail="API profile does not belong to this supplier platform")
+    return profile
+
+
+def save_supplier_pricing_automation(management_state: dict[str, Any], platform_key: str, mode: str) -> None:
+    supplier_quotas = {
+        str(key).strip().lower(): persisted_supplier_quota_config(ensure_mapping(value))
+        for key, value in ensure_mapping(management_state.get("supplier_quotas")).items()
+        if str(key).strip()
+    }
+    supplier_quotas.setdefault(platform_key, {})["pricing_automation"] = normalize_pricing_automation(mode)
+    save_management_state(
+        management_state.get("suppliers", []),
+        management_state.get("api_profiles", []),
+        management_state.get("model_routes", []),
+        management_state.get("route_bindings", []),
+        management_state.get("model_families", []),
+        management_state.get("router_settings", {}),
+        management_state.get("litellm_settings", {}),
+        management_state.get("routing_view_mode", "by_model"),
+        supplier_quotas,
+    )
+
+
+@app.get("/api/supplier-pricing/{supplier_key}")
+def api_supplier_pricing(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    state = load_management_state()
+    quota = resolved_supplier_quota_config(key, ensure_mapping(state.get("supplier_quotas")).get(key))
+    versions = get_usage_quota_store().list_pricing_versions(platform_key=key, limit=500)
+    return {
+        "ok": True,
+        "supplier_key": key,
+        "automation_mode": normalize_pricing_automation(quota.get("pricing_automation")),
+        "versions": versions,
+        "active": [item for item in versions if item.get("status") == "active"],
+        "candidates": [item for item in versions if item.get("status") == "candidate"],
+    }
+
+
+@app.post("/api/supplier-pricing/{supplier_key}/config")
+def api_update_supplier_pricing_config(
+    supplier_key: str,
+    payload: SupplierPricingConfigPayload,
+) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    mode = normalize_pricing_automation(payload.automation_mode)
+    state = load_management_state()
+    save_supplier_pricing_automation(state, key, mode)
+    return {"ok": True, "supplier_key": key, "automation_mode": mode}
+
+
+@app.post("/api/supplier-pricing/{supplier_key}/versions")
+def api_create_supplier_pricing_version(
+    supplier_key: str,
+    payload: PricingVersionPayload,
+) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    state = load_management_state()
+    profile = profile_for_supplier_platform(state, key, payload.api_profile_id)
+    normalized = normalize_pricing_observation(
+        key,
+        profile,
+        {
+            **payload.model_dump(),
+            "effective_from": payload.effective_from or now_iso_local(),
+            "confidence": "exact",
+        },
+        source="manual",
+    )
+    store = get_usage_quota_store()
+    version = store.insert_pricing_version(normalized)
+    active = store.activate_pricing_version(version["id"])
+    return {"ok": True, "item": active}
+
+
+def validate_pricing_version_supplier(supplier_key: str, version_id: str) -> tuple[Any, dict[str, Any]]:
+    key = validate_supplier_platform_key(supplier_key)
+    store = get_usage_quota_store()
+    item = store.get_pricing_version(version_id)
+    if not item or str(item.get("platform_key") or "") != key:
+        raise HTTPException(status_code=404, detail="Pricing version not found")
+    return store, item
+
+
+@app.post("/api/supplier-pricing/{supplier_key}/versions/{version_id}/activate")
+def api_activate_supplier_pricing_version(supplier_key: str, version_id: str) -> dict[str, Any]:
+    store, _ = validate_pricing_version_supplier(supplier_key, version_id)
+    return {"ok": True, "item": store.activate_pricing_version(version_id)}
+
+
+@app.post("/api/supplier-pricing/{supplier_key}/versions/{version_id}/reject")
+def api_reject_supplier_pricing_version(supplier_key: str, version_id: str) -> dict[str, Any]:
+    store, _ = validate_pricing_version_supplier(supplier_key, version_id)
+    try:
+        item = store.reject_pricing_version(version_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/supplier-credentials/{supplier_key}")
+def api_update_supplier_credentials(supplier_key: str, payload: SupplierCredentialPayload) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    unknown_fields = (set(payload.credentials) | set(payload.remove_fields)) - SENSITIVE_QUOTA_CREDENTIAL_FIELDS
+    if unknown_fields:
+        raise HTTPException(status_code=400, detail=f"Unsupported credential fields: {', '.join(sorted(unknown_fields))}")
+    vault = get_credential_vault()
+    try:
+        if payload.remove_fields:
+            vault.remove_fields(key, payload.remove_fields)
+        status = vault.merge(key, payload.credentials)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Credential vault update failed: {exc}") from exc
+    return {"ok": True, "credential_status": status}
+
+
+@app.delete("/api/supplier-credentials/{supplier_key}")
+def api_delete_supplier_credentials(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    vault = get_credential_vault()
+    try:
+        deleted = vault.delete(key)
+        status = vault.status(key)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Credential vault delete failed: {exc}") from exc
+    return {"ok": True, "deleted": deleted, "credential_status": status}
+
+
+@app.post("/api/supplier-credentials/{supplier_key}/repair-login")
+def api_repair_supplier_login(supplier_key: str, payload: SupplierLoginRepairPayload) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    management_state = load_management_state()
+    target = next((item for item in supplier_quota_targets(management_state) if item.get("platform_key") == key), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Supplier platform not found")
+    vault = get_credential_vault()
+    credentials = vault.get(key)
+    profile = copy.deepcopy(target.get("representative_profile") or {})
+    profile["quota"] = {**ensure_mapping(target.get("quota")), **credentials}
+    result = repair_portal_login_state(
+        profile,
+        totp_code=str(payload.totp_code or "").strip(),
+        supplier_key=key,
+    )
+    return redact_sensitive_data(result, list(credentials.values()))
+
+
+def resolve_supplier_sso_target(management_state: dict[str, Any], supplier_key: str) -> dict[str, Any]:
+    key = str(supplier_key or "").strip().lower()
+    target = next((item for item in supplier_quota_targets(management_state) if item.get("platform_key") == key), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Supplier platform not found")
+    quota = ensure_mapping(target.get("quota"))
+    adapter = browser_sso_adapter_for_target(target)
+    if not adapter:
+        raise HTTPException(status_code=400, detail="Browser SSO is not configured for this supplier adapter")
+    portal_base = str(
+        quota.get("portal_base")
+        or adapter.get("portal_base")
+        or f"https://{key}"
+    ).strip().rstrip("/")
+    parsed = urlparse(portal_base)
+    allowed_hosts = {str(host).strip().lower().lstrip(".") for host in adapter.get("portal_hosts", [])}
+    if parsed.scheme.lower() != "https" or (parsed.hostname or "").lower().lstrip(".") not in allowed_hosts:
+        raise HTTPException(status_code=400, detail="Supplier portal base must use an HTTPS adapter-approved host")
+    return {**target, "portal_base": portal_base, "browser_sso": adapter}
+
+
+@app.post("/api/supplier-sso/{supplier_key}/start")
+def api_start_supplier_sso(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    target = resolve_supplier_sso_target(load_management_state(), key)
+    try:
+        status = _supplier_sso_manager.start(
+            key,
+            str(target.get("portal_base") or f"https://{key}"),
+            interactive=True,
+            timeout_seconds=600,
+            adapter=ensure_mapping(target.get("browser_sso")),
+        )
+    except SsoTaskActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "sso_status": status}
+
+
+@app.get("/api/supplier-sso/{supplier_key}/status")
+def api_supplier_sso_status(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    return {
+        "ok": True,
+        "sso_status": _supplier_sso_manager.status(key),
+        "browser_runtime": browser_runtime_status(),
+    }
+
+
+@app.post("/api/supplier-sso/{supplier_key}/complete")
+def api_complete_supplier_sso(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    completed = _supplier_sso_manager.complete_interactive(key)
+    return {
+        "ok": True,
+        "completed": completed,
+        "sso_status": _supplier_sso_manager.status(key),
+    }
+
+
+@app.post("/api/supplier-sso/{supplier_key}/cancel")
+def api_cancel_supplier_sso(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    cancelled = _supplier_sso_manager.cancel(key)
+    return {"ok": True, "cancelled": cancelled, "sso_status": _supplier_sso_manager.status(key)}
+
+
+@app.delete("/api/supplier-sso/{supplier_key}/session")
+def api_clear_supplier_sso_session(supplier_key: str) -> dict[str, Any]:
+    key = validate_supplier_platform_key(supplier_key)
+    try:
+        cleared = _supplier_sso_manager.clear_session(key)
+    except SsoTaskActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "cleared": cleared, "sso_status": _supplier_sso_manager.status(key)}
 
 
 @app.get("/api/state")
@@ -3529,6 +5216,7 @@ def api_state() -> dict[str, Any]:
         "routing_view_mode": management_state.get("routing_view_mode", "by_model"),
         "suppliers": management_state.get("suppliers", []),
         "api_profiles": api_profiles,
+        "supplier_quotas": supplier_quota_public_state(management_state),
         "model_routes": management_state.get("model_routes", []),
         "route_bindings": management_state.get("route_bindings", []),
         "model_families": management_state.get("model_families", []),
@@ -3538,6 +5226,7 @@ def api_state() -> dict[str, Any]:
         "usage_dashboard": usage_dashboard_snapshot(management_state),
         "ports": {
             "litellm": litellm_port,
+            "claude_litellm": int(env_map.get("CLAUDE_LITELLM_PORT", "4101")),
             "open_webui": open_webui_port,
             "admin_panel": admin_port,
         },
@@ -3558,7 +5247,7 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
         api_profiles = normalize_api_profiles([item.model_dump() for item in payload.api_profiles], suppliers)
         model_routes = normalize_model_routes([item.model_dump() for item in payload.model_routes])
         route_bindings = normalize_route_bindings([item.model_dump() for item in payload.route_bindings], api_profiles, model_routes)
-        config = build_litellm_config_from_management_state(
+        configs = build_litellm_gateway_configs_from_management_state(
             suppliers,
             api_profiles,
             model_routes,
@@ -3578,7 +5267,7 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
         api_profiles = next_state.get("api_profiles", [])
         model_routes = next_state.get("model_routes", [])
         route_bindings = next_state.get("route_bindings", [])
-        config = build_litellm_config_from_management_state(
+        configs = build_litellm_gateway_configs_from_management_state(
             suppliers,
             api_profiles,
             model_routes,
@@ -3589,7 +5278,7 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
 
     next_env = merge_api_profile_secrets_into_env(payload.env, api_profiles)
     backup_file(ENV_PATH)
-    save_config(config)
+    save_gateway_configs(configs)
     save_management_state(
         suppliers,
         api_profiles,
@@ -3599,6 +5288,7 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
         payload.router_settings,
         payload.litellm_settings,
         payload.routing_view_mode,
+        payload.supplier_quotas,
     )
     write_env_file(next_env)
 
@@ -3610,6 +5300,7 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
 
 @app.post("/api/save-routing-draft")
 def api_save_routing_draft(payload: RoutingDraftPayload) -> dict[str, Any]:
+    previous_state = load_management_state()
     suppliers = normalize_suppliers([item.model_dump() for item in payload.suppliers])
     api_profiles = normalize_api_profiles([item.model_dump() for item in payload.api_profiles], suppliers)
     model_routes = normalize_model_routes([item.model_dump() for item in payload.model_routes])
@@ -3623,11 +5314,34 @@ def api_save_routing_draft(payload: RoutingDraftPayload) -> dict[str, Any]:
         payload.router_settings,
         payload.litellm_settings,
         payload.routing_view_mode,
+        payload.supplier_quotas,
     )
+    previous_routes = {str(item.get("id")): bool(item.get("gateway_enabled", False)) for item in previous_state.get("model_routes", [])}
+    next_routes = {str(item.get("id")): bool(item.get("gateway_enabled", False)) for item in model_routes}
+    previous_discovery = claude_discovery_settings(previous_state.get("litellm_settings", {}))
+    next_discovery = claude_discovery_settings(payload.litellm_settings)
+    gateway_publish_changed = previous_routes != next_routes or previous_discovery != next_discovery
+    gateway_reload_error = ""
+    if gateway_publish_changed:
+        try:
+            configs = build_litellm_gateway_configs_from_management_state(
+                suppliers,
+                api_profiles,
+                model_routes,
+                route_bindings,
+                payload.router_settings,
+                payload.litellm_settings,
+            )
+            save_gateway_configs(configs)
+            restart_litellm()
+        except Exception as error:
+            gateway_reload_error = str(error)
     return {
         "ok": True,
         "saved_to": str(STATE_PATH),
         "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "gateway_reloaded": gateway_publish_changed and not gateway_reload_error,
+        "gateway_reload_error": gateway_reload_error,
     }
 
 
@@ -3647,6 +5361,27 @@ def api_provider_comparison() -> dict[str, Any]:
     api_profiles = hydrate_api_profiles_with_secrets(management_state.get("api_profiles", []), env_map)
     dashboard = usage_dashboard_snapshot({**management_state, "api_profiles": api_profiles})
     return {"ok": True, "generated_at": dashboard["generated_at"], "items": dashboard["comparison"]}
+
+
+@app.get("/api/cost-attribution/{platform_key}")
+def api_cost_attribution(platform_key: str) -> dict[str, Any]:
+    normalized_key = str(platform_key or "").strip().lower()
+    management_state = load_management_state()
+    start_at = month_start_iso_local()
+    end_at = now_iso_local()
+    snapshot = supplier_cost_attribution_snapshot(
+        management_state,
+        get_usage_quota_store(),
+        start_at,
+        end_at,
+    )
+    if normalized_key not in snapshot:
+        raise HTTPException(status_code=404, detail="supplier platform not found")
+    return {
+        "ok": True,
+        "window": {"start_at": start_at, "end_at": end_at},
+        "item": snapshot[normalized_key],
+    }
 
 
 @app.get("/api/recharge-records")
@@ -3670,6 +5405,11 @@ def api_recharge_records(api_profile_id: str | None = None, supplier_id: str | N
         supplier_provider_key(supplier.get("id"), normalize_provider_name(supplier.get("custom_llm_provider"))): supplier
         for supplier in suppliers.values()
     }
+    supplier_platform_lookup = {
+        supplier_platform_provider_key(supplier_platform_key(profile.get("api_base"), suppliers.get(str(profile.get("supplier_id") or ""), {}).get("name"))): suppliers.get(str(profile.get("supplier_id") or ""), {})
+        for profile in api_profiles.values()
+        if str(profile.get("supplier_id") or "").strip()
+    }
     items: list[dict[str, Any]] = []
     if api_profile_id:
         profile = api_profiles.get(api_profile_id)
@@ -3680,11 +5420,25 @@ def api_recharge_records(api_profile_id: str | None = None, supplier_id: str | N
         supplier = suppliers.get(supplier_id)
         if not supplier:
             raise HTTPException(status_code=404, detail="supplier not found")
-        items = recharge_records_for_supplier(
-            store,
-            supplier_id,
-            provider_name=normalize_provider_name(supplier.get("custom_llm_provider")),
-        )
+        platform_keys = {
+            supplier_platform_key(
+                profile.get("api_base"),
+                supplier.get("name") or supplier.get("label"),
+            )
+            for profile in api_profiles.values()
+            if str(profile.get("supplier_id") or "") == str(supplier_id)
+        }
+        items = []
+        for platform_key in platform_keys or {None}:
+            items.extend(
+                recharge_records_for_supplier(
+                    store,
+                    supplier_id,
+                    provider_name=normalize_provider_name(supplier.get("custom_llm_provider")),
+                    platform_key=platform_key,
+                )
+            )
+        items = list({str(item.get("id")): item for item in items}.values())
     else:
         items = store.list_recharge_records(limit=500)
     normalized_items: list[dict[str, Any]] = []
@@ -3695,7 +5449,7 @@ def api_recharge_records(api_profile_id: str | None = None, supplier_id: str | N
                 str(item.get("api_key_env") or "").strip(),
             )
         )
-        matched_supplier = supplier_lookup.get(str(item.get("provider_key") or ""))
+        matched_supplier = supplier_lookup.get(str(item.get("provider_key") or "")) or supplier_platform_lookup.get(str(item.get("provider_key") or ""))
         resolved_supplier = suppliers.get(str((matched_profile or {}).get("supplier_id") or "").strip()) if matched_profile else matched_supplier
         normalized_items.append(
             {
@@ -3719,6 +5473,19 @@ def api_create_recharge_record(payload: RechargeRecordPayload) -> dict[str, Any]
     api_profiles = {item["id"]: item for item in management_state.get("api_profiles", []) if isinstance(item, dict) and item.get("id")}
     store = get_usage_quota_store()
     normalized_paid_amount = float(payload.paid_amount_cny or 0)
+    billing_type = str(payload.billing_type or "topup").strip().lower()
+    if billing_type not in {"topup", "subscription"}:
+        raise HTTPException(status_code=400, detail="billing_type must be topup or subscription")
+    if billing_type == "subscription":
+        service_start = iso_to_dt(payload.service_start)
+        service_end = iso_to_dt(payload.service_end)
+        if normalized_paid_amount < 0:
+            raise HTTPException(status_code=400, detail="subscription paid_amount_cny cannot be negative")
+        if service_start is None or service_end is None or service_end < service_start:
+            raise HTTPException(status_code=400, detail="subscription service period is invalid")
+    allocation_mode = str(payload.allocation_mode or "").strip().lower()
+    if not allocation_mode:
+        allocation_mode = "daily-amortized" if billing_type == "subscription" else "weighted-credit"
     record_payload: dict[str, Any]
     if str(payload.supplier_id or "").strip():
         supplier = suppliers.get(str(payload.supplier_id or "").strip())
@@ -3736,6 +5503,10 @@ def api_create_recharge_record(payload: RechargeRecordPayload) -> dict[str, Any]
             "bonus_amount": payload.bonus_amount,
             "bonus_currency": payload.bonus_currency,
             "balance_after_recharge": payload.balance_after_recharge,
+            "billing_type": billing_type,
+            "service_start": payload.service_start or None,
+            "service_end": payload.service_end or None,
+            "allocation_mode": allocation_mode,
             "note": payload.note,
         }
     else:
@@ -3753,11 +5524,45 @@ def api_create_recharge_record(payload: RechargeRecordPayload) -> dict[str, Any]
             "bonus_amount": payload.bonus_amount,
             "bonus_currency": payload.bonus_currency,
             "balance_after_recharge": payload.balance_after_recharge,
+            "billing_type": billing_type,
+            "service_start": payload.service_start or None,
+            "service_end": payload.service_end or None,
+            "allocation_mode": allocation_mode,
             "note": payload.note,
         }
     record = store.insert_recharge_record(
         record_payload
     )
+    return {"ok": True, "item": record}
+
+
+@app.patch("/api/recharge-records/{recharge_id}")
+def api_update_recharge_record(recharge_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    if "paid_amount_cny" in payload:
+        try:
+            updates["paid_amount_cny"] = float(payload.get("paid_amount_cny") or 0)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="paid_amount_cny must be a number") from exc
+    for key in (
+        "paid_at",
+        "credited_amount",
+        "credited_currency",
+        "bonus_amount",
+        "bonus_currency",
+        "balance_after_recharge",
+        "service_start",
+        "service_end",
+        "allocation_mode",
+        "note",
+    ):
+        if key in payload:
+            updates[key] = payload.get(key)
+    try:
+        record = get_usage_quota_store().update_recharge_record(recharge_id, updates)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=404 if "not found" in detail else 400, detail=detail) from exc
     return {"ok": True, "item": record}
 
 
@@ -3816,63 +5621,6 @@ def api_refresh_balances(payload: BalanceRefreshPayload) -> dict[str, Any]:
     with _balance_refresh_lock:
         return refresh_balances_v2(payload)
 
-    management_state = load_management_state()
-    profiles = [item for item in management_state.get("api_profiles", []) if isinstance(item, dict)]
-    if payload.api_profile_ids:
-        allowed = set(payload.api_profile_ids)
-        profiles = [item for item in profiles if item.get("id") in allowed]
-    store = get_usage_quota_store()
-    results: list[dict[str, Any]] = []
-    for profile in profiles:
-        quota = ensure_mapping(profile.get("quota"))
-        adapter = str(quota.get("adapter") or "manual")
-        currency = str(quota.get("currency") or "CNY")
-        limit = quota.get("limit")
-        current_balance = quota.get("current_balance")
-        used_amount = quota.get("used_amount")
-        if current_balance in (None, "") and limit not in (None, "") and used_amount not in (None, ""):
-            current_balance = float(limit) - float(used_amount)
-        if used_amount in (None, "") and limit not in (None, "") and current_balance not in (None, ""):
-            used_amount = float(limit) - float(current_balance)
-        status = "ok" if limit not in (None, "") or current_balance not in (None, "") else "unsupported"
-        snapshot = store.insert_provider_balance_snapshot(
-            {
-                "provider_key": profile_provider_key(profile),
-                "relay_label": str(profile.get("label") or ""),
-                "api_key_env": str(profile.get("api_key_env") or ""),
-                "adapter": adapter,
-                "status": status,
-                "currency": currency,
-                "balance_total": float(limit) if limit not in (None, "") else None,
-                "balance_used": float(used_amount) if used_amount not in (None, "") else None,
-                "balance_remaining": float(current_balance) if current_balance not in (None, "") else None,
-                "period_start": str(quota.get("period_start") or ""),
-                "period_end": str(quota.get("period_end") or ""),
-                "raw_summary": {
-                    "source": "manual-quota-config",
-                    "force": payload.force,
-                },
-            }
-        )
-        results.append(
-            {
-                "api_profile_id": profile.get("id"),
-                "label": profile.get("label"),
-                "status": status,
-                "source": "manual",
-                "adapter": adapter,
-                "currency": snapshot.get("currency"),
-                "balance_total": snapshot.get("balance_total"),
-                "balance_used": snapshot.get("balance_used"),
-                "balance_remaining": snapshot.get("balance_remaining"),
-                "period_start": snapshot.get("period_start"),
-                "period_end": snapshot.get("period_end"),
-                "checked_at": snapshot.get("checked_at"),
-                "message": "" if status == "ok" else "尚未配置可刷新的额度数据，当前仅支持手动额度。",
-            }
-        )
-    return {"ok": True, "refreshed_at": now_iso_local(), "results": results}
-
 
 @app.post("/api/service/start-all")
 def api_start_all() -> dict[str, Any]:
@@ -3902,6 +5650,12 @@ def api_restart_all() -> dict[str, Any]:
 def api_restart_litellm() -> dict[str, Any]:
     restart_litellm()
     return {"ok": True}
+
+
+@app.post("/api/service/{service_name}/{action}")
+def api_control_service(service_name: str, action: str) -> dict[str, Any]:
+    result = control_service(service_name, action)
+    return {"ok": True, "service": service_name, "action": action, **result}
 
 
 @app.post("/api/test/direct")
@@ -4043,7 +5797,21 @@ def api_models() -> dict[str, Any]:
 @app.post("/api/import/ccswitch")
 def api_import_ccswitch() -> dict[str, Any]:
     env_map = parse_env_file()
-    providers, router_settings, litellm_settings = load_provider_state()
+    current_state = load_management_state()
+    router_settings = current_state.get("router_settings", {}) or {}
+    litellm_settings = current_state.get("litellm_settings", {}) or {}
+    providers = flatten_management_state_to_providers(
+        current_state.get("suppliers", []),
+        current_state.get("api_profiles", []),
+        current_state.get("model_routes", []),
+        current_state.get("route_bindings", []),
+        include_unpublished=True,
+    )
+    existing_routes = {
+        str(item.get("public_model_name") or ""): item
+        for item in current_state.get("model_routes", [])
+        if isinstance(item, dict)
+    }
     imported = extract_ccswitch_provider_candidates()
 
     existing_keys = {
@@ -4075,9 +5843,46 @@ def api_import_ccswitch() -> dict[str, Any]:
         existing_keys.add(key)
         added.append(item)
 
-    config = build_litellm_config_from_providers(providers, router_settings, litellm_settings)
-    save_config(config)
-    save_provider_state(providers, router_settings, litellm_settings)
+    next_state = management_state_from_providers(
+        providers,
+        router_settings,
+        litellm_settings,
+        current_state.get("routing_view_mode", "by_model"),
+    )
+    next_routes = next_state.get("model_routes", [])
+    next_route_names = {str(item.get("public_model_name") or "") for item in next_routes}
+    for route in current_state.get("model_routes", []):
+        route_name = str(route.get("public_model_name") or "")
+        if route_name and route_name not in next_route_names:
+            next_routes.append(route)
+    for route in next_routes:
+        previous = existing_routes.get(str(route.get("public_model_name") or ""))
+        if previous:
+            route["gateway_enabled"] = bool(previous.get("gateway_enabled", False))
+
+    suppliers = normalize_suppliers(next_state.get("suppliers", []))
+    api_profiles = normalize_api_profiles(next_state.get("api_profiles", []), suppliers)
+    model_routes = normalize_model_routes(next_routes)
+    route_bindings = normalize_route_bindings(next_state.get("route_bindings", []), api_profiles, model_routes)
+    save_management_state(
+        suppliers,
+        api_profiles,
+        model_routes,
+        route_bindings,
+        current_state.get("model_families", []),
+        router_settings,
+        litellm_settings,
+        current_state.get("routing_view_mode", "by_model"),
+    )
+    configs = build_litellm_gateway_configs_from_management_state(
+        suppliers,
+        api_profiles,
+        model_routes,
+        route_bindings,
+        router_settings,
+        litellm_settings,
+    )
+    save_gateway_configs(configs)
     restart_litellm()
 
     litellm_port, open_webui_port, admin_port = get_ports(env_map)
