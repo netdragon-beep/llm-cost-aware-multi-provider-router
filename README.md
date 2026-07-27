@@ -78,6 +78,17 @@ flowchart LR
 - **客户端感知**：客户端使用同一公共模型名；成功回退时无需改变客户端配置。未配置
   可用回退时，最终错误会直接返回给客户端。
 
+![RelayDeck 路由与上游状态：供应商、API 分组、模型绑定和网络测试结果](docs/images/relaydeck-priority-routing.png)
+
+管理台在供应商 API 层保留模型绑定和路由角色（主路由、第一备用、第二备用等），便于
+在应用配置前核对实际的映射顺序。默认 `simple-shuffle` 策略仍以 `router_settings`
+为准，上图用于展示可审计的配置与状态，而不是声称已启用强制主备切换。
+
+![RelayDeck 网络测试反馈：指定 API 通过检查且模型列表可访问](docs/images/relaydeck-network-test-feedback.png)
+
+“测试网络”只验证上游连通性和模型发现接口，不发起模型对话。测试完成后，页面会在
+API 卡片与顶部反馈中显示通过或失败原因，作为是否调整、禁用或进一步测试该上游的依据。
+
 ## 兼容性矩阵
 
 | 客户端 | 接入地址或方式 | 协议与模型发现 | 使用要点 |
@@ -87,6 +98,10 @@ flowchart LR
 | 其他 OpenAI 兼容客户端 | `http://127.0.0.1:4100/v1` | OpenAI 兼容 | 使用 `chat/completions` 与模型列表等兼容接口。 |
 | Claude Code | 管理台的 Claude Code 配置入口，网关端口 `4101` | Anthropic 兼容；模型别名为 `claude-relaydeck-*` | 应用配置后完全退出并重新启动 Claude Code，再通过 `/model` 选择模型。 |
 
+![RelayDeck 客户端接入配置：模型列表、OpenAI 兼容与 Claude Code 兼容地址](docs/images/relaydeck-client-compatibility.png)
+
+截图仅展示可公开的本地地址；API Key 位于同一配置窗口的下方，但没有纳入文档图片。
+
 ## 可观测性与运维
 
 管理台把网关、Open WebUI 和管理服务的运行状态放在同一页面，并提供模型路由、
@@ -95,6 +110,9 @@ flowchart LR
 决策。
 
 ![RelayDeck 实时运维总览：服务状态、供应商/API 分组、额度刷新和上游检查](docs/images/relaydeck-observability-overview.png)
+
+上述运行面板与网络测试反馈结合，可以分别查看服务可用性、供应商/API 分组规模、
+模型绑定数量，以及单个上游的可达性和模型发现结果。
 
 ### 路由配置与状态检查
 
