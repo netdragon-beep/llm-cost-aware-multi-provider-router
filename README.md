@@ -94,7 +94,7 @@ flowchart LR
 入口。它帮助操作人员判断某个上游是否应继续启用，而不是静默替用户做不可见的路由
 决策。
 
-![RelayDeck 管理台总览：服务状态、额度、路由和诊断入口](docs/images/relaydeck-admin-overview.png)
+![RelayDeck 实时运维总览：服务状态、供应商/API 分组、额度刷新和上游检查](docs/images/relaydeck-observability-overview.png)
 
 ### 路由配置与状态检查
 
