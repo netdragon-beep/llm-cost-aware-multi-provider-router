@@ -31,6 +31,7 @@ from cost_attribution import (
     weighted_topup_basis,
 )
 from credential_vault import CredentialVault, get_credential_vault
+from platform_runtime import RuntimePaths
 from supplier_sso import (
     BUILTIN_BROWSER_SSO_ADAPTERS,
     SsoTaskActiveError,
@@ -55,7 +56,8 @@ SCRIPTS_DIR = ROOT / "scripts"
 STATIC_DIR = ROOT / "admin-panel" / "static"
 LOG_DIR = ROOT / "logs"
 ADMIN_PANEL_DIR = ROOT / "admin-panel"
-CONDA_ENV_ROOT = Path(r"D:/conda/envs/llm-stack-local")
+RUNTIME_PATHS = RuntimePaths.from_platform(root=ROOT)
+CONDA_ENV_ROOT = RUNTIME_PATHS.env_root
 CCSWITCH_WEB_DATA = Path(
     os.environ.get(
         "CCSWITCH_WEB_DATA",
@@ -63,9 +65,9 @@ CCSWITCH_WEB_DATA = Path(
     )
 )
 
-LITELLM_EXE = CONDA_ENV_ROOT / "Scripts" / "litellm.exe"
-OPEN_WEBUI_EXE = CONDA_ENV_ROOT / "Scripts" / "open-webui.exe"
-PYTHON_EXE = CONDA_ENV_ROOT / "python.exe"
+LITELLM_EXE = RUNTIME_PATHS.tool_path("litellm")
+OPEN_WEBUI_EXE = RUNTIME_PATHS.tool_path("open-webui")
+PYTHON_EXE = RUNTIME_PATHS.python_executable
 QUOTA_ADAPTERS_DIR = ROOT / "quota-adapters"
 BALANCE_REFRESH_INTERVAL_SEC = max(60, int(os.environ.get("BALANCE_REFRESH_INTERVAL_SEC", "300") or 300))
 logger = logging.getLogger(__name__)
@@ -98,6 +100,7 @@ SENSITIVE_QUOTA_CREDENTIAL_FIELDS = {
 ADAPTER_CREDENTIAL_PERMISSION_FIELDS = {*SENSITIVE_QUOTA_CREDENTIAL_FIELDS, "api_key_value"}
 SENSITIVE_KEY_FRAGMENTS = ("authorization", "cookie", "password", "secret", "token", "api_key", "apikey")
 CLAUDE_DISCOVERY_SETTINGS_KEY = "relaydeck_claude_discovery"
+ROUTING_DRAFT_SAVE_LOCK = threading.RLock()
 
 
 def claude_discovery_settings(litellm_settings: dict[str, Any] | None) -> dict[str, Any]:
@@ -140,7 +143,7 @@ def list_quota_adapter_scripts() -> list[dict[str, Any]]:
     for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
         if not path.is_file():
             continue
-        if path.suffix.lower() not in {".py", ".ps1", ".cmd", ".bat"}:
+        if path.suffix.lower() not in {".py", ".ps1", ".cmd", ".bat", ".sh"}:
             continue
         try:
             manifest = load_quota_adapter_manifest(path)
@@ -165,7 +168,7 @@ def resolve_quota_adapter_script(script_name: str | None) -> Path | None:
     root = ensure_quota_adapters_dir().resolve()
     candidate = Path(text)
     if not candidate.suffix:
-        for suffix in (".py", ".ps1", ".cmd", ".bat"):
+        for suffix in (".py", ".ps1", ".cmd", ".bat", ".sh"):
             named = root / f"{text}{suffix}"
             if named.exists() and named.is_file():
                 return named
@@ -181,7 +184,7 @@ def resolve_quota_adapter_script(script_name: str | None) -> Path | None:
         return None
     if not resolved.exists() or not resolved.is_file():
         return None
-    if resolved.suffix.lower() not in {".py", ".ps1", ".cmd", ".bat"}:
+    if resolved.suffix.lower() not in {".py", ".ps1", ".cmd", ".bat", ".sh"}:
         return None
     return resolved
 
@@ -239,12 +242,69 @@ def save_config(config: dict[str, Any]) -> None:
         yaml.safe_dump(config, f, sort_keys=False, allow_unicode=True)
 
 
-def save_gateway_configs(configs: dict[str, dict[str, Any]]) -> None:
+def _write_gateway_config(path: Path, config: dict[str, Any]) -> None:
+    """Atomically replace one gateway config after its YAML has been serialized."""
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            yaml.safe_dump(config, temp_file, sort_keys=False, allow_unicode=True)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
+
+
+def _restore_gateway_config(path: Path, previous_contents: bytes | None) -> None:
+    if previous_contents is None:
+        path.unlink(missing_ok=True)
+        return
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(previous_contents)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
+
+
+def _restore_gateway_configs(previous_openai: bytes | None, previous_claude: bytes | None) -> None:
+    _restore_gateway_config(CONFIG_PATH, previous_openai)
+    _restore_gateway_config(CLAUDE_CONFIG_PATH, previous_claude)
+
+
+def save_gateway_configs(configs: dict[str, dict[str, Any]]) -> tuple[bytes | None, bytes | None]:
     """Persist the native and Claude Code gateway views together."""
-    save_config(configs["openai"])
+    previous_openai = CONFIG_PATH.read_bytes() if CONFIG_PATH.exists() else None
+    previous_claude = CLAUDE_CONFIG_PATH.read_bytes() if CLAUDE_CONFIG_PATH.exists() else None
+    backup_file(CONFIG_PATH)
     backup_file(CLAUDE_CONFIG_PATH)
-    with CLAUDE_CONFIG_PATH.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(configs["claude"], f, sort_keys=False, allow_unicode=True)
+    try:
+        _write_gateway_config(CONFIG_PATH, configs["openai"])
+        _write_gateway_config(CLAUDE_CONFIG_PATH, configs["claude"])
+    except Exception:
+        try:
+            _restore_gateway_configs(previous_openai, previous_claude)
+        except Exception:
+            logger.exception("Failed to restore gateway configs after a write error")
+        raise
+    return previous_openai, previous_claude
 
 
 def configure_claude_code_settings(
@@ -769,14 +829,18 @@ def resolve_provider_api_base(api_base: str | None, custom_llm_provider: str | N
 def api_base_mismatch_hint(custom_llm_provider: str | None, api_base: str | None, status_code: int | None = None) -> str:
     provider_name = normalize_provider_name(custom_llm_provider)
     value = (api_base or "").strip().rstrip("/")
+    if status_code == 404 and provider_name == "anthropic":
+        return (
+            "当前 API 分组的上游协议配置为 anthropic，但该地址没有提供 Anthropic 路径。"
+            "上游协议由 API 分组决定，与模型家族无关；如果这是 OpenAI 兼容中转站，请把"
+            " Provider 类型改成 openai 后再试。"
+        )
     if provider_name == "anthropic" and value.endswith("/v1"):
         base = value[:-3].rstrip("/") or value
         return (
             "Provider=anthropic 支持填写根地址或已经包含 /v1 的 API Base；"
             f"当前地址 {value} 会自动使用 {base}/v1/models 和 {base}/v1/messages，避免重复拼接 /v1。"
         )
-    if status_code == 404 and provider_name == "anthropic":
-        return "当前接口不像原生 Anthropic 路径；如果这是 OpenAI 兼容中转站，请把 Provider 类型改成 openai 再试。"
     return ""
 
 
@@ -2343,6 +2407,8 @@ def probe_custom_quota_script(profile: dict[str, Any]) -> dict[str, Any]:
         command = [python_exe, str(script_path)]
     elif suffix == ".ps1":
         command = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+    elif suffix == ".sh":
+        command = ["/bin/sh", str(script_path)]
     else:
         command = [str(script_path)]
 
@@ -3786,6 +3852,21 @@ def normalize_route_bindings(
                 "enabled": bool(row.get("enabled", True)),
             }
         )
+    # An upstream model belongs to one public route within one API profile.  Keep
+    # conflicting historical rows for auditability, but only the lowest-priority
+    # row remains active so a raw model cannot fan out to several routes.
+    winners: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in sorted(items, key=lambda row: (int(row.get("priority", 100)), str(row.get("id", "")))):
+        key = (str(item.get("api_profile_id", "")), normalize_model_key(item.get("upstream_model")))
+        if not key[1] or not bool(item.get("enabled", True)):
+            continue
+        if key not in winners:
+            winners[key] = item
+            item.pop("mapping_conflict", None)
+            continue
+        item["enabled"] = False
+        item["mapping_conflict"] = True
+        item["mapping_conflict_reason"] = "同一 API 的原始模型已映射到另一条公共模型路由"
     return items
 
 
@@ -3979,6 +4060,7 @@ def load_management_state() -> dict[str, Any]:
                 ]),
                 "router_settings": state.get("router_settings", {}) or {},
                 "litellm_settings": state.get("litellm_settings", {}) or {},
+                "gateway_runtime_configs": state.get("gateway_runtime_configs"),
             }
         providers = [item for item in ensure_list(state.get("providers")) if isinstance(item, dict)]
         return management_state_from_providers(
@@ -4085,6 +4167,9 @@ def build_litellm_config_from_providers(
                 "relay_label": str(provider.get("relay_label") or ""),
                 "api_base_hash": api_base_hash(provider.get("api_base")),
                 "custom_llm_provider": str(provider.get("custom_llm_provider") or "openai"),
+                # Model family controls presentation; every published route is available
+                # through both client gateways while this field controls the upstream call.
+                "client_protocols": ["openai", "anthropic"],
             }
             discovery_metadata = claude_discovery_metadata(public_model_name, discovery_settings)
             if discovery_metadata:
@@ -4199,6 +4284,8 @@ def save_management_state(
     litellm_settings: dict[str, Any],
     routing_view_mode: str = "by_model",
     supplier_quotas: dict[str, dict[str, Any]] | None = None,
+    *,
+    gateway_runtime_configs: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     normalized_suppliers = normalize_suppliers(suppliers)
     normalized_api_profiles = normalize_api_profiles(api_profiles, normalized_suppliers)
@@ -4228,23 +4315,22 @@ def save_management_state(
         normalized_route_bindings,
     )
     backup_file(STATE_PATH)
+    next_state = {
+        "routing_view_mode": routing_view_mode or "by_model",
+        "suppliers": normalized_suppliers,
+        "api_profiles": normalized_api_profiles,
+        "supplier_quotas": normalized_supplier_quotas,
+        "model_routes": normalized_model_routes,
+        "route_bindings": normalized_route_bindings,
+        "model_families": normalized_model_families,
+        "providers": providers,
+        "router_settings": router_settings or {},
+        "litellm_settings": litellm_settings or {},
+    }
+    if gateway_runtime_configs is not None:
+        next_state["gateway_runtime_configs"] = gateway_runtime_configs
     STATE_PATH.write_text(
-        json.dumps(
-            {
-                "routing_view_mode": routing_view_mode or "by_model",
-                "suppliers": normalized_suppliers,
-                "api_profiles": normalized_api_profiles,
-                "supplier_quotas": normalized_supplier_quotas,
-                "model_routes": normalized_model_routes,
-                "route_bindings": normalized_route_bindings,
-                "model_families": normalized_model_families,
-                "providers": providers,
-                "router_settings": router_settings or {},
-                "litellm_settings": litellm_settings or {},
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(next_state, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -4458,45 +4544,49 @@ def service_status(port: int, target: Path | None = None, command_pattern: str =
     return {"port": port, "listening": bool(pids), "processes": processes}
 
 
-def run_powershell_script(script_name: str) -> dict[str, str]:
-    script = SCRIPTS_DIR / script_name
+def run_service_script(script_name: str) -> dict[str, str]:
+    script = RUNTIME_PATHS.script_path(script_name)
+    if not script.exists():
+        raise FileNotFoundError(f"Service script not found: {script}")
+    command = (
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+        if RUNTIME_PATHS.is_windows
+        else ["/bin/sh", str(script)]
+    )
+    options: dict[str, Any] = {
+        "cwd": str(ROOT),
+        "capture_output": True,
+        "text": True,
+        "check": True,
+    }
+    if RUNTIME_PATHS.is_windows:
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW
     result = subprocess.run(
-        [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-        ],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        check=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        command,
+        **options,
     )
     return {"stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
 
 
 def restart_litellm() -> None:
-    run_powershell_script("stop-litellm.ps1")
+    run_service_script("stop-litellm")
     time.sleep(1)
-    run_powershell_script("start-litellm.ps1")
+    run_service_script("start-litellm")
 
 
 def control_service(service_name: str, action: str) -> dict[str, Any]:
     if service_name == "litellm":
-        target, command_pattern, start_script = LITELLM_EXE, "litellm", "start-litellm.ps1"
+        target, command_pattern, start_script = LITELLM_EXE, "litellm", "start-litellm"
     elif service_name == "open-webui":
-        target, command_pattern, start_script = OPEN_WEBUI_EXE, "open-webui", "start-open-webui.ps1"
+        target, command_pattern, start_script = OPEN_WEBUI_EXE, "open-webui", "start-open-webui"
     else:
         raise ValueError(f"不支持控制服务：{service_name}")
 
     if action == "start":
-        return run_powershell_script(start_script)
+        return run_service_script(start_script)
     if action == "stop":
         if service_name == "litellm":
-            return run_powershell_script("stop-litellm.ps1")
+            return run_service_script("stop-litellm")
         stop_processes_by_target(target=target, command_pattern=command_pattern)
         return {"stdout": f"已停止 {service_name}", "stderr": ""}
     if action == "restart":
@@ -4505,7 +4595,7 @@ def control_service(service_name: str, action: str) -> dict[str, Any]:
             return {"stdout": f"宸查噸啟 {service_name}", "stderr": ""}
         stop_processes_by_target(target=target, command_pattern=command_pattern)
         time.sleep(1)
-        return run_powershell_script(start_script)
+        return run_service_script(start_script)
     raise ValueError(f"不支持服务操作：{action}")
 
 
@@ -4861,7 +4951,7 @@ def api_configure_claude_code() -> dict[str, Any]:
     if not gateway_key:
         raise HTTPException(status_code=400, detail="Missing LITELLM_MASTER_KEY")
     claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = RUNTIME_PATHS.claude_code_settings_path()
     try:
         result = configure_claude_code_settings(
             settings_path,
@@ -5300,49 +5390,88 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
 
 @app.post("/api/save-routing-draft")
 def api_save_routing_draft(payload: RoutingDraftPayload) -> dict[str, Any]:
-    previous_state = load_management_state()
-    suppliers = normalize_suppliers([item.model_dump() for item in payload.suppliers])
-    api_profiles = normalize_api_profiles([item.model_dump() for item in payload.api_profiles], suppliers)
-    model_routes = normalize_model_routes([item.model_dump() for item in payload.model_routes])
-    route_bindings = normalize_route_bindings([item.model_dump() for item in payload.route_bindings], api_profiles, model_routes)
-    save_management_state(
-        suppliers,
-        api_profiles,
-        model_routes,
-        route_bindings,
-        payload.model_families,
-        payload.router_settings,
-        payload.litellm_settings,
-        payload.routing_view_mode,
-        payload.supplier_quotas,
-    )
-    previous_routes = {str(item.get("id")): bool(item.get("gateway_enabled", False)) for item in previous_state.get("model_routes", [])}
-    next_routes = {str(item.get("id")): bool(item.get("gateway_enabled", False)) for item in model_routes}
-    previous_discovery = claude_discovery_settings(previous_state.get("litellm_settings", {}))
-    next_discovery = claude_discovery_settings(payload.litellm_settings)
-    gateway_publish_changed = previous_routes != next_routes or previous_discovery != next_discovery
-    gateway_reload_error = ""
-    if gateway_publish_changed:
-        try:
-            configs = build_litellm_gateway_configs_from_management_state(
-                suppliers,
-                api_profiles,
-                model_routes,
-                route_bindings,
-                payload.router_settings,
-                payload.litellm_settings,
+    with ROUTING_DRAFT_SAVE_LOCK:
+        previous_state = load_management_state()
+        suppliers = normalize_suppliers([item.model_dump() for item in payload.suppliers])
+        api_profiles = normalize_api_profiles([item.model_dump() for item in payload.api_profiles], suppliers)
+        model_routes = normalize_model_routes([item.model_dump() for item in payload.model_routes])
+        route_bindings = normalize_route_bindings([item.model_dump() for item in payload.route_bindings], api_profiles, model_routes)
+        stored_runtime_configs = previous_state.get("gateway_runtime_configs")
+        if isinstance(stored_runtime_configs, dict) and {"openai", "claude"}.issubset(stored_runtime_configs):
+            runtime_gateway_configs = stored_runtime_configs
+        else:
+            runtime_gateway_configs = build_litellm_gateway_configs_from_management_state(
+                previous_state.get("suppliers", []),
+                previous_state.get("api_profiles", []),
+                previous_state.get("model_routes", []),
+                previous_state.get("route_bindings", []),
+                previous_state.get("router_settings", {}),
+                previous_state.get("litellm_settings", {}),
             )
-            save_gateway_configs(configs)
-            restart_litellm()
-        except Exception as error:
-            gateway_reload_error = str(error)
-    return {
-        "ok": True,
-        "saved_to": str(STATE_PATH),
-        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "gateway_reloaded": gateway_publish_changed and not gateway_reload_error,
-        "gateway_reload_error": gateway_reload_error,
-    }
+        next_gateway_configs = build_litellm_gateway_configs_from_management_state(
+            suppliers,
+            api_profiles,
+            model_routes,
+            route_bindings,
+            payload.router_settings,
+            payload.litellm_settings,
+        )
+        gateway_config_changed = runtime_gateway_configs != next_gateway_configs
+        gateway_reload_error = ""
+        save_management_state(
+            suppliers,
+            api_profiles,
+            model_routes,
+            route_bindings,
+            payload.model_families,
+            payload.router_settings,
+            payload.litellm_settings,
+            payload.routing_view_mode,
+            payload.supplier_quotas,
+            gateway_runtime_configs=runtime_gateway_configs if gateway_config_changed else None,
+        )
+        if gateway_config_changed:
+            try:
+                previous_gateway_files = save_gateway_configs(next_gateway_configs)
+            except Exception as error:
+                gateway_reload_error = str(error)
+            else:
+                try:
+                    restart_litellm()
+                except Exception as error:
+                    recovery_errors = []
+                    try:
+                        _restore_gateway_configs(*previous_gateway_files)
+                    except Exception as recovery_error:
+                        logger.exception("Failed to restore gateway configs after routing draft restart error")
+                        recovery_errors.append(f"rollback failed: {recovery_error}")
+                    try:
+                        restart_litellm()
+                    except Exception as recovery_error:
+                        logger.exception("Failed to restart the restored gateway config")
+                        recovery_errors.append(str(recovery_error))
+                    gateway_reload_error = str(error)
+                    if recovery_errors:
+                        gateway_reload_error = f"{gateway_reload_error}; recovery failed: {'; '.join(recovery_errors)}"
+                else:
+                    save_management_state(
+                        suppliers,
+                        api_profiles,
+                        model_routes,
+                        route_bindings,
+                        payload.model_families,
+                        payload.router_settings,
+                        payload.litellm_settings,
+                        payload.routing_view_mode,
+                        payload.supplier_quotas,
+                    )
+        return {
+            "ok": True,
+            "saved_to": str(STATE_PATH),
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "gateway_reloaded": gateway_config_changed and not gateway_reload_error,
+            "gateway_reload_error": gateway_reload_error,
+        }
 
 
 @app.get("/api/usage/summary")
@@ -5624,20 +5753,20 @@ def api_refresh_balances(payload: BalanceRefreshPayload) -> dict[str, Any]:
 
 @app.post("/api/service/start-all")
 def api_start_all() -> dict[str, Any]:
-    result = run_powershell_script("start-all.ps1")
+    result = run_service_script("start-all")
     return {"ok": True, **result}
 
 
 @app.post("/api/service/stop-all")
 def api_stop_all() -> dict[str, Any]:
-    result = run_powershell_script("stop-llm-stack.ps1")
+    result = run_service_script("stop-llm-stack")
     return {"ok": True, **result}
 
 
 @app.post("/api/service/restart-all")
 def api_restart_all() -> dict[str, Any]:
-    stop_result = run_powershell_script("stop-llm-stack.ps1")
-    start_result = run_powershell_script("start-all.ps1")
+    stop_result = run_service_script("stop-llm-stack")
+    start_result = run_service_script("start-all")
     return {
         "ok": True,
         "stop_stdout": stop_result.get("stdout", ""),
@@ -5792,6 +5921,37 @@ def api_models() -> dict[str, Any]:
         return {"url": f"http://127.0.0.1:{litellm_port}/models", "status_code": resp.status_code, "ok": resp.is_success, "body": resp.json()}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def client_gateway_models() -> dict[str, Any]:
+    """Read the two local gateway discovery endpoints without exposing credentials."""
+    env_map = parse_env_file()
+    litellm_port, _, _ = get_ports(env_map)
+    claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
+    headers = {"Authorization": f"Bearer {env_map.get('LITELLM_MASTER_KEY', '')}"}
+
+    def probe(url: str) -> tuple[list[str], str]:
+        try:
+            with httpx.Client(timeout=8) as client:
+                response = client.get(url, headers=headers)
+            if not response.is_success:
+                return [], f"网关返回 HTTP {response.status_code}"
+            payload = response.json()
+            return sorted({str(item.get("id") or "").strip() for item in payload.get("data", []) if isinstance(item, dict) and str(item.get("id") or "").strip()}), ""
+        except Exception:
+            return [], "无法连接本地网关，请确认服务已启动"
+
+    openai_models, openai_error = probe(f"http://127.0.0.1:{litellm_port}/models")
+    claude_aliases, claude_error = probe(f"http://127.0.0.1:{claude_port}/v1/models")
+    return {
+        "openai": {"url": f"http://127.0.0.1:{litellm_port}/models", "models": openai_models, "error": openai_error},
+        "claude": {"url": f"http://127.0.0.1:{claude_port}/v1/models", "models": [{"alias": alias, "public_model_name": alias.split("-relaydeck-", 1)[1] if "-relaydeck-" in alias else ""} for alias in claude_aliases], "error": claude_error},
+    }
+
+
+@app.get("/api/client-gateway-models")
+def api_client_gateway_models() -> dict[str, Any]:
+    return client_gateway_models()
 
 
 @app.post("/api/import/ccswitch")

@@ -1,6 +1,6 @@
 # RelayDeck Local
 
-一个面向 Windows 本地环境的多供应商 LLM 网关与管理台。RelayDeck 将
+一个面向 Windows 与 macOS 本地环境的多供应商 LLM 网关与管理台。RelayDeck 将
 LiteLLM、Open WebUI 和供应商管理集中到同一套工作流中：客户端只需要连接
 一个稳定地址，系统负责按模型、优先级、健康状态、额度和成本选择上游，并在
 失败时自动切换。
@@ -16,6 +16,8 @@ LiteLLM、Open WebUI 和供应商管理集中到同一套工作流中：客户�
 - **额度、用量与成本**：记录请求用量、配置价格，并展示供应商与模型的成本对比。
 - **额度适配器**：可为非标准供应商 API 扩展余额和额度采集。
 - **Claude Code 网关**：为 Claude Code 提供独立的 Anthropic 兼容入口与模型发现。
+- **双协议适配**：模型家族、客户端协议和供应商 API 协议相互独立；同一模型可同时
+  服务 OpenAI 与 Anthropic 兼容客户端。
 
 ```mermaid
 flowchart LR
@@ -54,13 +56,25 @@ flowchart LR
 
 ## 前置条件
 
+### Windows
+
 - Windows PowerShell
-- Conda
-- Python 3.11（建议）
+- Conda 与 Python 3.11（建议）
 - 已安装或可安装 LiteLLM 与 Open WebUI 的 Conda 环境
 
-启动脚本默认查找名为 `llm-stack-local` 的 Conda 环境。若环境位置或名称不同，
-请调整 `scripts/common.ps1` 中的环境路径解析逻辑。
+Windows 脚本默认使用 `D:/conda/envs/llm-stack-local`。环境位置不同可设置
+`RELAYDECK_ENV_ROOT`，或调整 `scripts/common.ps1`。
+
+### macOS
+
+- macOS 12 或更高版本
+- Python 3.11（建议）与 `python3`
+- `curl`、系统 Keychain 命令 `security`
+- 可选的项目虚拟环境 `.venv`
+
+macOS 默认使用项目内 `.venv`。若虚拟环境位于其他位置，设置
+`RELAYDECK_ENV_ROOT=/绝对路径/venv`；若 Python 不在其中，另设
+`RELAYDECK_PYTHON=/绝对路径/python`。
 
 ## 快速开始
 
@@ -104,6 +118,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-admin-panel.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-llm-stack.ps1
 ```
 
+### macOS 快速开始
+
+1. 创建虚拟环境并安装依赖：
+
+   ```sh
+   python3 -m venv .venv
+   . .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. 创建并编辑本地配置：
+
+   ```sh
+   cp .env.example .env
+   ```
+
+   至少设置 `LITELLM_MASTER_KEY`、`OPEN_WEBUI_SECRET_KEY` 和所需供应商密钥。
+
+3. 安装 Playwright 浏览器运行时（只在使用浏览器登录或网页额度适配器时需要）：
+
+   ```sh
+   sh ./scripts/install-browser-runtime.sh
+   ```
+
+4. 启动或停止本地服务：
+
+   ```sh
+   sh ./scripts/start-all.sh
+   sh ./scripts/stop-llm-stack.sh
+   ```
+
+   脚本使用 `run/*.pid` 管理 LiteLLM、Claude Code 网关、Open WebUI 和管理页，日志写入
+   `logs/`。启动成功后访问 `http://127.0.0.1:8091`。
+
 ## 客户端接入
 
 将 OpenAI 兼容客户端连接到本地 LiteLLM 网关：
@@ -117,6 +165,16 @@ Model:    管理台中已发布的公共模型名称
 例如客户端使用 `gpt-5.4` 时，只需将该名称作为公共模型发布。RelayDeck 会从
 已启用的绑定中选择可用上游，并按设置的优先级执行故障转移，不需要在客户端中
 逐个切换供应商。
+
+### 协议适配边界
+
+模型家族（例如 Claude 系列）只用于分类、展示和 Anthropic 客户端的默认模型 tier，
+不会决定供应商 API 的请求协议。每个 API 分组独立配置上游协议：`openai` 上游使用
+OpenAI 兼容路径，`anthropic` 上游使用 Anthropic 路径。
+
+`4100` 接收 OpenAI 兼容请求，`4101` 接收 Anthropic 兼容请求；两个入口共享同一条
+公共模型路由、优先级和回退链。LiteLLM 会依据 API 分组声明的上游协议转换请求与响应，
+因此 Claude 系列模型也可以绑定仅提供 OpenAI 兼容接口的第三方供应商。
 
 ## 管理台工作流
 
@@ -137,7 +195,8 @@ RelayDeck 在 `4101` 端口提供独立的 Claude Code 网关。它为原生网�
 链路，不会污染普通 OpenAI 兼容客户端的模型列表。
 
 在管理台的客户端接入区域选择 Claude Code 配置后，RelayDeck 会备份并合并当前
-Windows 用户的 Claude 配置，将 Claude Code 指向本地网关。完成配置后，完全退出
+用户的 `~/.claude/settings.json`，将 Claude Code 指向本地网关。Windows 与 macOS
+都使用这个用户目录位置。完成配置后，完全退出
 并重新启动 Claude Code，再使用 `/model` 选择模型。
 
 模型发现不保证所有上游都支持 Claude 所需的流式响应或工具调用能力；启用前请对
@@ -153,6 +212,9 @@ Windows 用户的 Claude 配置，将 Claude Code 指向本地网关。完成配
 部分供应商使用网页或 Google SSO。RelayDeck 可启动隔离的浏览器会话完成授权；
 它不会读取或保存 Google 密码。验证码、双因素认证、账户选择和失效授权必须由
 用户在可见浏览器窗口中完成。会话数据保存在本地受保护目录，不应纳入版本控制。
+
+Windows 将供应商网页登录凭据以当前用户的 DPAPI 加密后保存；macOS 将凭据保存到
+当前用户的系统 Keychain，状态文件只记录已配置字段，不保存明文或可解密密文。
 
 ## 安全与仓库边界
 
@@ -179,7 +241,7 @@ gitleaks detect --no-banner --redact
 | --- | --- |
 | `admin-panel/` | FastAPI 管理台及前端页面 |
 | `config/` | 可提交的配置模板与本地生成配置 |
-| `scripts/` | Windows 启动、停止和迁移脚本 |
+| `scripts/` | Windows PowerShell 与 macOS Shell 启动、停止、浏览器运行时脚本 |
 | `quota-adapters/` | 供应商额度适配器与模板 |
 | `docs/` | 设计说明和适配器文档 |
 

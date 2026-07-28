@@ -9,6 +9,7 @@ sys.path.insert(0, str(ADMIN_PANEL_DIR))
 
 from app import (  # noqa: E402
     adapter_scoped_quota,
+    api_base_mismatch_hint,
     build_direct_request,
     migrate_legacy_supplier_quota_state,
     provider_models_probe,
@@ -49,6 +50,17 @@ class SupplierQuotaStateTests(unittest.TestCase):
             max_tokens=8,
         )
         self.assertEqual(url, "https://lingsuan.top/v1/messages")
+
+    def test_anthropic_404_hint_keeps_model_family_independent_from_api_protocol(self):
+        hint = api_base_mismatch_hint(
+            "anthropic",
+            "https://example.test",
+            status_code=404,
+        )
+
+        self.assertIn("API 分组", hint)
+        self.assertIn("模型家族", hint)
+        self.assertIn("openai", hint)
 
     def test_builtin_supplier_hosts_resolve_without_user_selection(self):
         self.assertEqual(resolve_supplier_quota_adapter("lingsuan.top")["adapter"], "lingsuan-web")

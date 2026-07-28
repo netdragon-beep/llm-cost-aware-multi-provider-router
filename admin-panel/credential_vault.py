@@ -4,6 +4,8 @@ import base64
 import ctypes
 import json
 import os
+import subprocess
+import sys
 import threading
 from ctypes import wintypes
 from datetime import datetime
@@ -101,9 +103,63 @@ def _normalize_credentials(credentials: dict[str, Any]) -> dict[str, str]:
 
 
 class CredentialVault:
-    def __init__(self, path: str | Path = DEFAULT_VAULT_PATH):
+    def __init__(
+        self,
+        path: str | Path = DEFAULT_VAULT_PATH,
+        *,
+        platform_name: str | None = None,
+        security_runner: Any | None = None,
+    ):
         self.path = Path(path)
         self._lock = threading.RLock()
+        self.platform_name = platform_name or sys.platform
+        self.security_runner = security_runner or self._run_security
+
+    @property
+    def uses_keychain(self) -> bool:
+        return self.platform_name == "darwin"
+
+    @staticmethod
+    def _run_security(arguments: list[str], *, input_text: str | None = None) -> str:
+        completed = subprocess.run(
+            ["security", *arguments],
+            input=input_text,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        return completed.stdout.strip()
+
+    def _keychain_account(self, supplier_key: str) -> str:
+        return f"supplier:{supplier_key}"
+
+    def _keychain_get(self, supplier_key: str) -> dict[str, str]:
+        try:
+            raw = self.security_runner(
+                ["find-generic-password", "-s", "RelayDeck Local", "-a", self._keychain_account(supplier_key), "-w"]
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode == 44:
+                return {}
+            raise RuntimeError("Unable to read macOS Keychain credentials") from exc
+        decoded = json.loads(raw or "{}")
+        if not isinstance(decoded, dict):
+            raise ValueError("Invalid macOS Keychain credential payload")
+        return _normalize_credentials(decoded)
+
+    def _keychain_replace(self, supplier_key: str, credentials: dict[str, str]) -> None:
+        account = self._keychain_account(supplier_key)
+        if not credentials:
+            try:
+                self.security_runner(["delete-generic-password", "-s", "RelayDeck Local", "-a", account])
+            except subprocess.CalledProcessError as exc:
+                if exc.returncode != 44:
+                    raise RuntimeError("Unable to remove macOS Keychain credentials") from exc
+            return
+        # Keychain owns the secret. The local document stores only safe metadata.
+        self.security_runner(
+            ["add-generic-password", "-U", "-s", "RelayDeck Local", "-a", account, "-w", json.dumps(credentials, ensure_ascii=False, separators=(",", ":"))]
+        )
 
     def _read_document(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -141,6 +197,8 @@ class CredentialVault:
         key = _normalize_supplier_key(supplier_key)
         with self._lock:
             document = self._read_document()
+            if self.uses_keychain:
+                return self._keychain_get(key)
             return self._decrypt_entry(document["suppliers"].get(key))
 
     def replace(self, supplier_key: str, credentials: dict[str, Any]) -> dict[str, Any]:
@@ -149,13 +207,19 @@ class CredentialVault:
         with self._lock:
             document = self._read_document()
             if normalized:
-                document["suppliers"][key] = {
-                    "protected_data": self._encrypt_credentials(normalized),
+                entry = {
                     "configured_fields": sorted(normalized),
                     "updated_at": _now_iso(),
                 }
+                if self.uses_keychain:
+                    document["suppliers"][key] = entry
+                    self._keychain_replace(key, normalized)
+                else:
+                    document["suppliers"][key] = {**entry, "protected_data": self._encrypt_credentials(normalized)}
             else:
                 document["suppliers"].pop(key, None)
+                if self.uses_keychain:
+                    self._keychain_replace(key, {})
             self._write_document(document)
             return self.status(key)
 
@@ -181,6 +245,8 @@ class CredentialVault:
             existed = key in document["suppliers"]
             if existed:
                 document["suppliers"].pop(key, None)
+                if self.uses_keychain:
+                    self._keychain_replace(key, {})
                 self._write_document(document)
             return existed
 
@@ -189,13 +255,13 @@ class CredentialVault:
         with self._lock:
             document = self._read_document()
             entry = document["suppliers"].get(key)
-            credentials = self._decrypt_entry(entry)
+            credentials = self._keychain_get(key) if self.uses_keychain else self._decrypt_entry(entry)
             return {
                 "supplier_key": key,
                 "configured": bool(credentials),
                 "configured_fields": sorted(credentials),
                 "updated_at": str((entry or {}).get("updated_at") or ""),
-                "storage": "windows-dpapi-current-user",
+                "storage": "macos-keychain" if self.uses_keychain else "windows-dpapi-current-user",
             }
 
 

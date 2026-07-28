@@ -1889,6 +1889,15 @@
         </div>
       </div>
       <div class="kv-block">
+        <label>当前网关可发现模型</label>
+        <div class="helper-text" id="client-gateway-models-status">打开时正在读取本地网关。</div>
+        <div class="provider-actions"><button class="secondary" id="btn-refresh-client-gateway-models" type="button">刷新模型列表</button></div>
+        <div class="client-gateway-url-grid">
+          <div><strong>Codex / OpenAI（4100）</strong><div class="helper-text" id="client-openai-model-list">加载中…</div></div>
+          <div><strong>Claude Code（4101）</strong><div class="helper-text" id="client-claude-model-list">加载中…</div></div>
+        </div>
+      </div>
+      <div class="kv-block">
         <label>curl 示例</label>
         <textarea id="litellm-models-curl" readonly></textarea>
         <div class="provider-actions">
@@ -2788,6 +2797,17 @@
         return `API 测试通过：${label} 可访问，识别到 ${knownCount} 个模型`;
       }
       return `API 测试结果：${label} -> ${item.reason || item.status || '未返回状态'}`;
+    }
+
+    function formatModelSyncError(error) {
+      const message = String(error?.message || error?.detail || error || '').trim();
+      const normalized = message.toLowerCase();
+      if (/401|403|unauthorized|forbidden|鉴权|认证/.test(normalized)) return '同步失败：鉴权被拒绝，请检查 API Key 或权限。';
+      if (/404|405|not found|not supported|\/models/.test(normalized)) return '同步失败：该 API 不支持 /models 模型发现接口。';
+      if (/timeout|timed out|超时/.test(normalized)) return '同步失败：请求模型列表超时，请检查网络或稍后重试。';
+      if (/json|decode|parse/.test(normalized)) return '同步失败：上游返回的不是可解析的 JSON 模型列表。';
+      if (/http|status|\b4\d\d\b|\b5\d\d\b/.test(normalized)) return `同步失败：上游 HTTP 请求异常${message ? `（${message}）` : ''}。`;
+      return `同步失败：${message || '未获得可用的模型列表响应。'}`;
     }
 
     function supplierSupportsPortalOrderSync(supplier) {
@@ -3902,6 +3922,10 @@
       const selectedInRoute = bindings.some(binding => binding.id === state.selectedBindingId);
       const shouldOpen = state.openRouteIds.includes(route.id) || (!state.openRouteIds.length && selectedInRoute);
       const pinned = isPinnedModelRoute(route.id);
+      const selectedFamily = String(route.model_family || route.category || '').trim();
+      const classificationPrompt = selectedFamily
+        ? `分类提示词已应用：将「${selectedFamily}」作为该公共模型的管理与路由分组；不会据此改写 API 分组的上游协议。`
+        : '尚未应用分类提示词：请选择模型家族后，服务器会保存该公共模型的分类。';
       const bindingListBody = `
         <div class="binding-list-head">
           <div>
@@ -3942,6 +3966,7 @@
                 ${routeFamilyOptions(route.model_family || route.category || '')}
               </select>
               <span class="pill muted">${escapeHtml(routeFamilyText(route))}</span>
+              <span class="pill muted">客户端兼容：OpenAI + Anthropic</span>
               <span class="pill muted">${route.enabled === false ? '停用' : '启用中'}</span>
             </div>
           </summary>
@@ -3959,6 +3984,10 @@
               <select data-route-id="${escapeHtml(route.id)}" data-route-key="model_family">
                 ${routeFamilyOptions(route.model_family || route.category || '')}
               </select>
+            </div>
+            <div class="field full">
+              <div class="helper-text">服务器分类提示词</div>
+              <div class="supplier-meta-card">${escapeHtml(classificationPrompt)}</div>
             </div>
             <div class="field full">
               <label class="toggle-inline">
@@ -4007,6 +4036,7 @@
       const knownModels = Array.isArray(profile.known_models) ? profile.known_models : [];
       const supplierName = supplier.name || '未分组供应商';
       const apiLabel = profile.label || profile.api_base || profile.id || '未命名 API';
+      const providerName = (profile.custom_llm_provider || 'openai').trim().toLowerCase();
       const summaryLabel = supplierName && apiLabel && supplierName !== apiLabel
         ? `${supplierName} / ${apiLabel}`
         : (apiLabel || supplierName || '未绑定 API');
@@ -4041,6 +4071,7 @@
             </div>
             <div class="binding-summary-actions">
               <span class="pill muted">${escapeHtml(roleText)} / 优先级 ${escapeHtml(binding.priority ?? 100)}</span>
+              <span class="pill muted">上游协议：${escapeHtml(providerName)}</span>
               <span class="status-light ${escapeHtml(networkStatus.status || 'unknown')}">网络 ${escapeHtml(networkText)}</span>
               <span class="status-light ${escapeHtml(dialogStatus.status || 'unknown')}">对话 ${escapeHtml(dialogText)}</span>
             </div>
@@ -4049,7 +4080,7 @@
             <button class="secondary" data-action="check-binding-network" data-binding-id="${escapeHtml(binding.id)}">测试网络</button>
             <button class="secondary" data-action="check-binding-dialog" data-binding-id="${escapeHtml(binding.id)}">测试对话</button>
             <button class="secondary" data-action="select-binding" data-binding-id="${escapeHtml(binding.id)}">设为测试目标</button>
-            <button class="secondary" data-action="open-supplier-api" data-api-profile-id="${escapeHtml(profile.id)}" title="切换到按供应商视图并打开这条 API 的基础信息">查看供应商 API</button>
+            <button class="secondary" data-action="open-supplier-api" data-api-profile-id="${escapeHtml(profile.id)}" title="切换到按供应商视图并打开这条 API 的上游协议配置">配置上游协议</button>
             <button class="danger" data-action="remove-binding" data-binding-id="${escapeHtml(binding.id)}">删除上游</button>
           </div>
           <div class="binding-body">
@@ -4857,6 +4888,9 @@
       document.querySelectorAll('[data-raw-model-profile-id]').forEach(select => {
         select.addEventListener('change', () => updateRawModelRoute(select));
       });
+      document.querySelectorAll('[data-raw-model-family]').forEach(select => {
+        select.addEventListener('change', () => updateRawModelFamily(select));
+      });
       document.querySelectorAll('[data-availability-search]').forEach(input => {
         input.addEventListener('input', () => {
           const profileId = input.dataset.availabilitySearch;
@@ -5232,51 +5266,10 @@
         }
       });
 
-      for (const upstreamModel of knownModels || []) {
-        const publicModelName = normalizePublicModelName(upstreamModel);
-        if (!publicModelName) continue;
-
-        let route = state.modelRoutes.find(item =>
-          item.public_model_name === publicModelName
-          || item.public_model_name === upstreamModel
-        );
-
-        if (!route) {
-          route = {
-            id: makeId('route'),
-            public_model_name: publicModelName,
-            display_name: publicModelName,
-            routing_strategy: 'simple-shuffle',
-            enabled: true,
-          };
-          state.modelRoutes.push(route);
-          createdRoutes += 1;
-        }
-
-        syncedRouteIds.push(route.id);
-
-        const existedBinding = state.routeBindings.find(item =>
-          item.model_route_id === route.id
-          && item.api_profile_id === profile.id
-          && normalizeBindingModelKey(item.upstream_model || '') === normalizeBindingModelKey(upstreamModel)
-        );
-        if (existedBinding) continue;
-
-        state.routeBindings.push({
-          id: makeId('binding'),
-          model_route_id: route.id,
-          api_profile_id: profile.id,
-          upstream_model: upstreamModel,
-          priority: nextBindingPriority(route.id),
-          rpm: 120,
-          enabled: true,
-        });
-        createdBindings += 1;
-      }
-
-      syncedRouteIds.forEach(routeId => dedupeBindingsForRoute(routeId));
+      // Discovery only records supplier capabilities.  It must not silently
+      // create a public route: the user maps each raw model explicitly below.
       state.openRouteIds = [...new Set([...state.openRouteIds, ...syncedRouteIds])];
-      return { createdRoutes, createdBindings, staleBindings, restoredBindings, liveModels: liveModelKeys.size };
+      return { createdRoutes, createdBindings, updatedBindings: restoredBindings, staleBindings, restoredBindings, liveModels: liveModelKeys.size };
     }
 
     function updateRouteField(input) {
@@ -5351,29 +5344,73 @@
         .join('');
     }
 
+    function rawModelFamily(profile, rawModel, matches = []) {
+      const families = profile.raw_model_families && typeof profile.raw_model_families === 'object'
+        ? profile.raw_model_families
+        : {};
+      return String(families[normalizeBindingModelKey(rawModel)] || routeById(matches.find(item => !item.mapping_conflict)?.model_route_id || '')?.model_family || guessModelFamilyName(rawModel) || '').trim();
+    }
+
+    function rawModelFamilyOptions(selectedFamily = '') {
+      const families = [...new Set([...state.modelFamilies, ...state.modelRoutes.map(route => route.model_family)])]
+        .map(value => String(value || '').trim()).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+      return [`<option value="" ${selectedFamily ? '' : 'selected'}>未分类</option>`, ...families.map(family => `<option value="${escapeHtml(family)}" ${family === selectedFamily ? 'selected' : ''}>${escapeHtml(family)}</option>`)].join('');
+    }
+
+    function rawModelRouteOptions(family, rawModel, selectedRouteId = '') {
+      const routes = state.modelRoutes.filter(route => String(route.model_family || '') === String(family || ''));
+      return [
+        `<option value="">选择公共模型</option>`,
+        `<option value="__raw_model_name__">直接使用原始模型名：${escapeHtml(rawModel)}</option>`,
+        ...routes.map(route => `<option value="${escapeHtml(route.id)}" ${route.id === selectedRouteId ? 'selected' : ''}>${escapeHtml(route.public_model_name || route.display_name || route.id)}</option>`),
+      ].join('');
+    }
+
+    function updateRawModelFamily(select) {
+      const profile = apiProfileById(select.dataset.rawModelProfileId);
+      const rawModel = String(select.dataset.rawModelName || '').trim();
+      if (!profile || !rawModel) return;
+      profile.raw_model_families = profile.raw_model_families && typeof profile.raw_model_families === 'object' ? profile.raw_model_families : {};
+      profile.raw_model_families[normalizeBindingModelKey(rawModel)] = String(select.value || '').trim();
+      markRoutingDirty();
+      renderAll();
+    }
+
     function updateRawModelRoute(select) {
       const profile = apiProfileById(select.dataset.rawModelProfileId);
       const upstreamModel = String(select.dataset.rawModelName || '').trim();
-      const routeId = String(select.value || '').trim();
+      let routeId = String(select.value || '').trim();
       if (!profile || !upstreamModel || !routeId) return;
-      const existing = bindingsForApiProfile(profile.id).find(binding =>
-        normalizeBindingModelKey(binding.upstream_model || '') === normalizeBindingModelKey(upstreamModel)
-      );
-      if (existing) {
-        existing.model_route_id = routeId;
-        existing.sync_state = '';
-        existing.sync_reason = '';
-        existing.sync_checked_at = '';
-        existing.sync_disabled_by_sync = false;
-        existing.enabled = true;
-        state.selectedBindingId = existing.id;
-      } else if (!attachRawModelToRoute(routeId, profile.id, upstreamModel)) {
-        setRoutingSaveStatus('这个原始模型已经绑定到当前公共模型', 'warn', true);
-        return;
+      const family = rawModelFamily(profile, upstreamModel);
+      if (routeId === '__raw_model_name__') {
+        let route = state.modelRoutes.find(item => String(item.public_model_name || '') === upstreamModel);
+        if (!route) {
+          route = { id: makeId('route'), public_model_name: upstreamModel, display_name: upstreamModel, model_family: family, routing_strategy: 'simple-shuffle', enabled: true, gateway_enabled: false };
+          state.modelRoutes.push(route);
+        }
+        routeId = route.id;
       }
+      const rawKey = normalizeBindingModelKey(upstreamModel);
+      const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === rawKey);
+      const existing = candidates.find(binding => binding.model_route_id === routeId) || candidates[0];
+      state.routeBindings = state.routeBindings.filter(binding => !(
+        binding.api_profile_id === profile.id && normalizeBindingModelKey(binding.upstream_model || '') === rawKey
+      ));
+      const binding = existing || defaultRouteBinding(routeId, profile.id);
+      binding.model_route_id = routeId;
+      binding.upstream_model = upstreamModel;
+      binding.enabled = true;
+      delete binding.mapping_conflict;
+      delete binding.mapping_conflict_reason;
+      delete binding.sync_state;
+      delete binding.sync_reason;
+      delete binding.sync_checked_at;
+      delete binding.sync_disabled_by_sync;
+      state.routeBindings.push(binding);
+      state.selectedBindingId = binding.id;
       markRoutingDirty();
       renderAll();
-      setRoutingSaveStatus(`已将 ${upstreamModel} 切换到新的公共模型`, 'ok', true);
+      setRoutingSaveStatus(`已将 ${upstreamModel} 映射到公共模型`, 'ok', true);
     }
 
     function supplierCredentialUpdates(platformKey) {
@@ -6092,19 +6129,31 @@
         const profile = apiProfileById(profileId);
         if (!profile) return;
         beginApiActionScope(profileId);
-        const result = await checkApiProfiles([profile], false);
-        const item = result.results?.[0];
-        if (item?.known_ids?.length) {
+        const restoreButton = startActionButtonFeedback(button, '同步中...');
+        showFloatingActionNotice('正在同步模型列表…', 'saving', { persistent: true });
+        try {
+          const result = await checkApiProfiles([profile], false);
+          const item = result.results?.[0];
+          if (!item || !['green', 'yellow'].includes(item.status)) {
+            throw new Error(item?.reason || '上游未返回可用模型列表');
+          }
           const previousModels = new Set(
             (profile.known_models || []).map(modelName => normalizeBindingModelKey(modelName)).filter(Boolean)
           );
-          const nextModels = [...new Set(item.known_ids.map(modelName => String(modelName || '').trim()).filter(Boolean))];
+          const nextModels = [...new Set((item.known_ids || []).map(modelName => String(modelName || '').trim()).filter(Boolean))];
           profile.known_models = nextModels;
           const syncResult = syncKnownModelsToRoutes(profile, profile.known_models);
           markRoutingDirty();
           try {
             await saveAll();
             const addedModels = nextModels.filter(modelName => !previousModels.has(normalizeBindingModelKey(modelName))).length;
+            const bindingSummary = `创建 ${syncResult.createdBindings} 条、更新 ${syncResult.updatedBindings || 0} 条、停用 ${syncResult.staleBindings} 条绑定`;
+            showFloatingActionNotice(
+              nextModels.length
+                ? `同步完成：发现 ${nextModels.length} 个原始模型；${bindingSummary}。`
+                : `同步完成，但未发现模型；${bindingSummary}。`,
+              nextModels.length ? 'ok' : 'warn',
+            );
             el('test-result').textContent = [
               `已同步并应用 ${nextModels.length} 个当前模型。`,
               `新增 ${addedModels} 个模型，当前有效 ${syncResult.liveModels} 个，失效 ${syncResult.staleBindings} 条历史绑定。`,
@@ -6115,11 +6164,18 @@
           } catch (error) {
             renderAll();
             renderTestModelOptions();
-            setRoutingSaveStatus('模型列表已同步，但应用配置失败', 'fail', true);
+            const message = `模型列表已同步，但应用配置失败：${String(error || '')}`;
+            setRoutingSaveStatus(message, 'fail', true);
+            showFloatingActionNotice(message, 'fail');
             el('test-result').textContent = `模型列表已更新到当前页面，但自动保存/应用失败：${String(error || '')}`;
           }
-        } else {
-          el('test-result').textContent = `没有读取到可同步的模型列表。\n\n${JSON.stringify(result, null, 2)}`;
+        } catch (error) {
+          const message = formatModelSyncError(error);
+          setRoutingSaveStatus(message, 'fail', true);
+          showFloatingActionNotice(message, 'fail');
+          el('test-result').textContent = message;
+        } finally {
+          restoreButton();
         }
       }
       if (action === 'repair-portal-login') {
@@ -6127,14 +6183,6 @@
         const profile = apiProfileById(profileId);
         if (!profile) return;
         await repairPortalLogin(profile, button);
-      }
-      if (action === 'locate-public-model') {
-        const binding = bindingById(button.dataset.bindingId);
-        if (!binding) return;
-        state.selectedBindingId = binding.id;
-        state.routingViewMode = 'by_model';
-        renderAll();
-        setRoutingSaveStatus(`已定位到公共模型「${routeById(binding.model_route_id)?.public_model_name || '未命名模型'}」`, 'ok', true);
       }
       if (action === 'save-supplier-recharge') {
         const supplierId = button.dataset.supplierId;
@@ -6610,6 +6658,20 @@
       el('litellm-auth-scheme').textContent = currentLiteLlmAuthScheme();
       el('litellm-models-curl').value = currentLiteLlmCurlCommand();
       el('litellm-models-overlay').dataset.open = 'true';
+      refreshClientGatewayModels();
+    }
+
+    async function refreshClientGatewayModels() {
+      el('client-gateway-models-status').textContent = '正在读取运行中的本地网关…';
+      el('client-openai-model-list').textContent = '加载中…';
+      el('client-claude-model-list').textContent = '加载中…';
+      try {
+        const result = await api('/api/client-gateway-models');
+        const openai = result.openai || {}; const claude = result.claude || {};
+        el('client-openai-model-list').textContent = openai.error || ((openai.models || []).join('、') || '当前没有已发布且可发现的模型');
+        el('client-claude-model-list').textContent = claude.error || ((claude.models || []).map(item => item.public_model_name ? `${item.alias}（公共模型：${item.public_model_name}）` : item.alias).join('、') || '当前没有可发现的 Claude Code 模型');
+        el('client-gateway-models-status').textContent = (openai.error || claude.error) ? '部分网关不可用；未显示任何密钥。' : '已从运行中的两个本地网关刷新。';
+      } catch (_error) { el('client-gateway-models-status').textContent = '读取失败，请确认本地网关已启动。'; el('client-openai-model-list').textContent = '无法读取'; el('client-claude-model-list').textContent = '无法读取'; }
     }
 
     function hideLiteLlmModelsInfoDialog() {
@@ -7198,6 +7260,7 @@
       el('btn-copy-litellm-api-key').onclick = () => copyTextToClipboard(currentLiteLlmApiKey(), 'API Key 已复制');
       el('btn-copy-litellm-auth-scheme').onclick = () => copyTextToClipboard(currentLiteLlmAuthScheme(), '授权头格式已复制');
       el('btn-copy-litellm-models-curl').onclick = () => copyTextToClipboard(currentLiteLlmCurlCommand(), 'curl 命令已复制');
+      el('btn-refresh-client-gateway-models').onclick = refreshClientGatewayModels;
       el('btn-close-new-api-overlay').onclick = () => closeNewApiModal();
       el('btn-cancel-new-api').onclick = () => closeNewApiModal();
       el('btn-save-new-api').onclick = saveNewApiFromModal;
@@ -7914,11 +7977,12 @@
             <input data-api-profile-id="${escapeHtml(profile.id)}" data-api-key="label" value="${escapeHtml(profile.label || '')}">
           </div>
           <div class="field">
-            <label>Provider 类型</label>
+            <label>上游协议 Provider 类型</label>
             <select data-api-profile-id="${escapeHtml(profile.id)}" data-api-key="custom_llm_provider">
               <option value="openai" ${profile.custom_llm_provider === 'anthropic' ? '' : 'selected'}>openai</option>
               <option value="anthropic" ${profile.custom_llm_provider === 'anthropic' ? 'selected' : ''}>anthropic</option>
             </select>
+            <div class="helper-text">由 API 分组决定，与模型家族无关。Claude 系列也可绑定 OpenAI 兼容上游；两个本地客户端入口会由网关完成协议适配。</div>
           </div>
           <div class="field full">
             <label>API Base</label>
@@ -7996,42 +8060,28 @@
         bindingsByRawModel.get(key).push(binding);
       });
       const renderAvailabilityRow = (rawModel, matches, stale = false) => {
-        const selectedRouteId = matches[0]?.model_route_id || '';
-        const mappedText = matches.length
-          ? matches.map(binding => {
-              const route = routeById(binding.model_route_id) || {};
-              const role = bindingRoleText(binding, bindingsForRoute(binding.model_route_id));
-              return `${route.public_model_name || '未命名公共模型'}（${role}）`;
-            }).join('；')
-          : '未绑定公共模型';
-        const locateButtons = matches.map(binding => `
-          <button class="secondary" type="button" data-action="locate-public-model" data-binding-id="${escapeHtml(binding.id)}">定位公共模型</button>
-        `).join('');
-        const testBinding = matches[0] || null;
+        const activeBinding = matches.find(binding => !binding.mapping_conflict && binding.enabled !== false) || null;
+        const selectedRouteId = activeBinding?.model_route_id || '';
+        const family = rawModelFamily(profile, rawModel, matches);
+        const mappedText = activeBinding
+          ? (routeById(activeBinding.model_route_id)?.public_model_name || '未命名公共模型')
+          : '待映射';
+        const conflictBindings = matches.filter(binding => binding.mapping_conflict);
+        const testBinding = activeBinding || matches[0] || null;
         const testConversationButton = `
           <button class="secondary" type="button" data-action="check-api-model-dialog" data-api-profile-id="${escapeHtml(profile.id)}" ${testBinding ? `data-binding-id="${escapeHtml(testBinding.id)}"` : `data-upstream-model="${escapeHtml(rawModel)}"`} title="测试 ${escapeHtml(rawModel)}">测试对话</button>
         `;
-        const routeSelector = state.modelRoutes.length
-          ? `<details class="availability-switcher">
-              <summary>${matches.length ? '切换公共模型' : '选择公共模型'}</summary>
-              <div class="availability-switcher-body">
-                <select data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">
-                  <option value="">${matches.length ? '选择新的公共模型' : '选择公共模型'}</option>
-                  ${publicModelOptions(selectedRouteId)}
-                </select>
-              </div>
-            </details>`
-          : '<span class="helper-text">当前还没有公共模型</span>';
         return `
           <div class="reference-chip model-availability-row ${stale ? 'stale' : ''}">
             <div><span class="model-availability-label">原始模型名称</span><div class="model-availability-value">${escapeHtml(rawModel)}</div></div>
-            <div><span class="model-availability-label">公共模型</span><div class="model-availability-value">${escapeHtml(mappedText)}</div></div>
+            <div><span class="model-availability-label">当前公共模型</span><div class="model-availability-value">${escapeHtml(mappedText)}</div></div>
             <div><span class="model-availability-label">API 分组</span><div class="model-availability-value">${escapeHtml(profile.label || profile.id)}</div></div>
             <div class="model-availability-actions">
-              ${routeSelector}
+              <label class="model-availability-label">模型系列<select data-raw-model-family data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">${rawModelFamilyOptions(family)}</select></label>
+              <label class="model-availability-label">映射到公共模型<select data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">${rawModelRouteOptions(family, rawModel, selectedRouteId)}</select></label>
               ${testConversationButton}
-              ${locateButtons}
             </div>
+            ${conflictBindings.length ? `<div class="helper-text warn">历史映射冲突：已停用 ${conflictBindings.length} 条重复绑定。选择“映射到公共模型”即可整理为当前选择。</div>` : ''}
             ${stale ? '<div class="helper-text warn">该绑定已不在最近一次同步的原始模型列表中。</div>' : ''}
           </div>
         `;
@@ -8051,10 +8101,10 @@
         }));
       const availabilityGroups = new Map();
       [...knownModelRows, ...staleModelRows].forEach(row => {
-        const family = guessModelFamilyName(row.rawModel) || '未分家族';
-        const publicModel = row.matches[0]
-          ? (routeById(row.matches[0].model_route_id)?.public_model_name || '未命名公共模型')
-          : '未绑定公共模型';
+        const activeBinding = row.matches.find(binding => !binding.mapping_conflict && binding.enabled !== false);
+        const route = activeBinding ? routeById(activeBinding.model_route_id) : null;
+        const family = route?.model_family || '待映射';
+        const publicModel = route?.public_model_name || '待映射';
         if (!availabilityGroups.has(family)) availabilityGroups.set(family, new Map());
         const publicGroups = availabilityGroups.get(family);
         if (!publicGroups.has(publicModel)) publicGroups.set(publicModel, []);
@@ -8106,7 +8156,7 @@
           `;
         }).join('');
       const refsBody = `
-        <div class="helper-text">列表展示供应商返回的原始模型，以及它在 RelayDeck 中对应的公共模型。发现映射不正确时，可以直接切换公共模型或定位到对应模型。</div>
+        <div class="helper-text">每条原始模型都先选择模型系列，再映射到一个公共模型。未完成映射的模型会单独归入“待映射”。</div>
         ${staleReferences.length ? `<div class="helper-text warn">最近一次同步未在 /models 中发现 ${staleReferences.length} 条历史绑定，已自动停用；确认不再使用后可清理。</div>` : ''}
         <div class="availability-search">
           <label for="availability-search-${escapeHtml(profile.id)}">搜索当前 API 的模型</label>

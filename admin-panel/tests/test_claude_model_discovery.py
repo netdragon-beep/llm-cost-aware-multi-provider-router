@@ -139,6 +139,50 @@ class ClaudeModelDiscoveryTests(unittest.TestCase):
             configs["openai"]["model_list"][0]["litellm_params"],
         )
 
+    def test_dual_gateway_configs_keep_upstream_protocol_independent_from_model_family(self):
+        providers = [
+            {
+                "model_name": "claude-fable-5",
+                "upstream_model": "claude-fable-5",
+                "custom_llm_provider": "openai",
+                "relay_label": "openai-compatible-claude",
+                "gateway_enabled": True,
+                "enabled": True,
+                "priority": 10,
+            },
+            {
+                "model_name": "claude-fable-5",
+                "upstream_model": "claude-fable-5-native",
+                "custom_llm_provider": "anthropic",
+                "relay_label": "native-anthropic-claude",
+                "gateway_enabled": True,
+                "enabled": True,
+                "priority": 20,
+            },
+        ]
+
+        configs = app.build_litellm_gateway_configs_from_providers(providers, {}, {})
+
+        for gateway in ("openai", "claude"):
+            model_list = configs[gateway]["model_list"]
+            self.assertEqual(
+                [item["litellm_params"]["custom_llm_provider"] for item in model_list],
+                ["openai", "anthropic"],
+            )
+            self.assertEqual(
+                model_list[0]["model_info"]["relaydeck"]["client_protocols"],
+                ["openai", "anthropic"],
+            )
+
+        self.assertEqual(
+            configs["openai"]["model_list"][0]["model_name"],
+            "claude-fable-5",
+        )
+        self.assertEqual(
+            configs["claude"]["model_list"][0]["model_name"],
+            "claude-haiku-relaydeck-claude-fable-5",
+        )
+
     def test_dual_gateway_configs_keep_fallback_order_for_claude_aliases(self):
         providers = [
             {
