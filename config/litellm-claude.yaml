@@ -1,15 +1,49 @@
 model_list:
 - model_name: claude-haiku-relaydeck-claude-fable-5
   litellm_params:
-    model: claude-fable-5
-    custom_llm_provider: anthropic
+    model: cc-max-claude-fable-5
+    custom_llm_provider: openai
     api_base: https://lingsuan.top/v1
     api_key: os.environ/RELAYDECK_API_KEY_API_SUPPLIER_OPENAI_HTTPS_LINGSUAN_TOP_LINGSUAN_API_KEY
     rpm: 120
     metadata:
       relaydeck: &id001
         platform_key: lingsuan.top
-        cost_provider_key: billing-supplier_supplier-claude-openai-anthropic
+        cost_provider_key: billing-supplier_supplier-claude-openai-openai
+        supplier_id: supplier_claude-openai
+        api_profile_id: api_supplier-claude-openai-https-lingsuan-top-v1-relaydeck-api-key-api-supplier-openai-https-lingsuan-top-lingsuan-api-key
+        model_route_id: route_claude-fable-5
+        route_binding_id: binding_ms3a3cva_2o9ik0
+        public_model_name: claude-fable-5
+        upstream_model: cc-max-claude-fable-5
+        relay_label: 灵算claude
+        api_base_hash: b660bf4e0117cf07
+        custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
+  model_info:
+    relay_label: claude
+    public_model_name: claude-fable-5
+    platform_key: lingsuan.top
+    supplier_id: supplier_claude-openai
+    api_profile_id: api_supplier-claude-openai-https-lingsuan-top-v1-relaydeck-api-key-api-supplier-openai-https-lingsuan-top-lingsuan-api-key
+    model_route_id: route_claude-fable-5
+    route_binding_id: binding_ms3a3cva_2o9ik0
+    relaydeck: *id001
+    priority: 100
+    enabled: true
+- model_name: claude-haiku-relaydeck-claude-fable-5__2__claude
+  litellm_params:
+    model: claude-fable-5
+    custom_llm_provider: openai
+    api_base: https://lingsuan.top/v1
+    api_key: os.environ/RELAYDECK_API_KEY_API_SUPPLIER_OPENAI_HTTPS_LINGSUAN_TOP_LINGSUAN_API_KEY
+    rpm: 120
+    metadata:
+      relaydeck: &id002
+        platform_key: lingsuan.top
+        cost_provider_key: billing-supplier_supplier-claude-openai-openai
         supplier_id: supplier_claude-openai
         api_profile_id: api_supplier-claude-openai-https-lingsuan-top-v1-relaydeck-api-key-api-supplier-openai-https-lingsuan-top-lingsuan-api-key
         model_route_id: route_claude-fable-5
@@ -18,7 +52,10 @@ model_list:
         upstream_model: claude-fable-5
         relay_label: 灵算claude
         api_base_hash: b660bf4e0117cf07
-        custom_llm_provider: anthropic
+        custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
   model_info:
     relay_label: claude
     public_model_name: claude-fable-5
@@ -27,8 +64,8 @@ model_list:
     api_profile_id: api_supplier-claude-openai-https-lingsuan-top-v1-relaydeck-api-key-api-supplier-openai-https-lingsuan-top-lingsuan-api-key
     model_route_id: route_claude-fable-5
     route_binding_id: binding_route-claude-fable-5-api-supplier-claude-openai-https-lingsuan-top-v1-relaydeck-api-key-api-supplier-openai-https-lingsuan-top-lingsuan-api-key-claude-fable-5-100-17
-    relaydeck: *id001
-    priority: 100
+    relaydeck: *id002
+    priority: 110
     enabled: true
 - model_name: claude-haiku-relaydeck-deepseek-v4-flash
   litellm_params:
@@ -38,7 +75,7 @@ model_list:
     api_key: os.environ/PACKYAPI_KEY_1
     rpm: 120
     metadata:
-      relaydeck: &id002
+      relaydeck: &id003
         platform_key: packyapi.com
         cost_provider_key: billing-supplier_supplier-packycode-openai-openai
         supplier_id: supplier_packycode-openai
@@ -50,6 +87,9 @@ model_list:
         relay_label: PackyCode
         api_base_hash: c9fadbadadb2c26f
         custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
   model_info:
     relay_label: packycode
     public_model_name: deepseek-v4-flash
@@ -58,7 +98,7 @@ model_list:
     api_profile_id: api_supplier-packycode-openai-https-www-packyapi-com-v1-packyapi-key-1
     model_route_id: route_deepseek-v4-flash
     route_binding_id: binding_route-deepseek-v4-flash-api-supplier-packycode-openai-https-www-packyapi-com-v1-packyapi-key-1-deepseek-v4-flash-100-59
-    relaydeck: *id002
+    relaydeck: *id003
     priority: 100
     enabled: true
 - model_name: claude-haiku-relaydeck-gpt-5-6-luna
@@ -69,7 +109,7 @@ model_list:
     api_key: os.environ/RELAYDECK_API_KEY_API_MRO6A0ZA_WINVMF
     rpm: 120
     metadata:
-      relaydeck: &id003
+      relaydeck: &id004
         platform_key: lingsuan.top
         cost_provider_key: billing-supplier_supplier-codex-openai-openai
         supplier_id: supplier_codex-openai
@@ -81,6 +121,9 @@ model_list:
         relay_label: 灵算-codex
         api_base_hash: b660bf4e0117cf07
         custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
   model_info:
     relay_label: codex
     public_model_name: gpt-5.6-luna
@@ -89,7 +132,7 @@ model_list:
     api_profile_id: api_supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf
     model_route_id: route_gpt-5-6-luna
     route_binding_id: binding_route-gpt-5-6-luna-api-supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf-gpt-5-6-luna-100-127
-    relaydeck: *id003
+    relaydeck: *id004
     priority: 100
     enabled: true
 - model_name: claude-haiku-relaydeck-gpt-5-6-sol
@@ -100,7 +143,7 @@ model_list:
     api_key: os.environ/RELAYDECK_API_KEY_API_MRO6A0ZA_WINVMF
     rpm: 120
     metadata:
-      relaydeck: &id004
+      relaydeck: &id005
         platform_key: lingsuan.top
         cost_provider_key: billing-supplier_supplier-codex-openai-openai
         supplier_id: supplier_codex-openai
@@ -112,6 +155,9 @@ model_list:
         relay_label: 灵算-codex
         api_base_hash: b660bf4e0117cf07
         custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
   model_info:
     relay_label: codex
     public_model_name: gpt-5.6-sol
@@ -120,7 +166,7 @@ model_list:
     api_profile_id: api_supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf
     model_route_id: route_gpt-5-6-sol
     route_binding_id: binding_route-gpt-5-6-sol-api-supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf-gpt-5-6-sol-100-128
-    relaydeck: *id004
+    relaydeck: *id005
     priority: 100
     enabled: true
 - model_name: claude-haiku-relaydeck-gpt-5-6-terra
@@ -131,7 +177,7 @@ model_list:
     api_key: os.environ/RELAYDECK_API_KEY_API_MRO6A0ZA_WINVMF
     rpm: 120
     metadata:
-      relaydeck: &id005
+      relaydeck: &id006
         platform_key: lingsuan.top
         cost_provider_key: billing-supplier_supplier-codex-openai-openai
         supplier_id: supplier_codex-openai
@@ -143,6 +189,9 @@ model_list:
         relay_label: 灵算-codex
         api_base_hash: b660bf4e0117cf07
         custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
   model_info:
     relay_label: codex
     public_model_name: gpt-5.6-terra
@@ -151,14 +200,50 @@ model_list:
     api_profile_id: api_supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf
     model_route_id: route_gpt-5-6-terra
     route_binding_id: binding_route-gpt-5-6-terra-api-supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf-gpt-5-6-terra-100-129
-    relaydeck: *id005
+    relaydeck: *id006
     priority: 100
+    enabled: true
+- model_name: claude-haiku-relaydeck-claude-fable-5-pojia
+  litellm_params:
+    model: claude-fable-5
+    custom_llm_provider: openai
+    api_base: https://lingsuan.top/v1
+    api_key: os.environ/RELAYDECK_API_KEY_API_MS3LN8FI_YM2YO9
+    rpm: 120
+    metadata:
+      relaydeck: &id007
+        platform_key: lingsuan.top
+        cost_provider_key: billing-supplier_supplier-claude-openai-openai
+        supplier_id: supplier_claude-openai
+        api_profile_id: api_ms3ln8fi_ym2yo9
+        model_route_id: route_ms67v6z4_vsx7gs
+        route_binding_id: binding_ms3lnvgl_elsyis
+        public_model_name: claude-fable-5-pojia
+        upstream_model: claude-fable-5
+        relay_label: 灵算claude版本破甲
+        api_base_hash: b660bf4e0117cf07
+        custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
+  model_info:
+    relay_label: claude
+    public_model_name: claude-fable-5-pojia
+    platform_key: lingsuan.top
+    supplier_id: supplier_claude-openai
+    api_profile_id: api_ms3ln8fi_ym2yo9
+    model_route_id: route_ms67v6z4_vsx7gs
+    route_binding_id: binding_ms3lnvgl_elsyis
+    relaydeck: *id007
+    priority: 120
     enabled: true
 router_settings:
   routing_strategy: simple-shuffle
   num_retries: 2
   timeout: 60
-  fallbacks: []
+  fallbacks:
+  - claude-haiku-relaydeck-claude-fable-5:
+    - claude-haiku-relaydeck-claude-fable-5__2__claude
 litellm_settings:
   set_verbose: false
   drop_params: true

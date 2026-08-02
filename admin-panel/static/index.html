@@ -335,8 +335,76 @@
       gap: 14px;
     }
 
+    .client-gateway-model-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .client-gateway-model-row {
+      padding: 6px 8px;
+      border-left: 2px solid rgba(102, 206, 255, 0.48);
+      background: rgba(255, 255, 255, 0.035);
+      overflow-wrap: anywhere;
+    }
+
+    .client-integration-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .client-integration-card {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid rgba(116, 202, 255, 0.24);
+      border-radius: 6px;
+      background: rgba(8, 29, 47, 0.55);
+    }
+
+    .client-integration-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    .client-app-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid rgba(157, 228, 255, 0.55);
+      background: rgba(20, 73, 104, 0.7);
+      color: #eafaff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .client-app-icon img {
+      display: block;
+      width: 16px;
+      height: 16px;
+      object-fit: contain;
+      filter: invert(1);
+    }
+
+    .client-integration-card .helper-text {
+      min-height: 36px;
+      margin: 9px 0;
+      overflow-wrap: anywhere;
+    }
+
     @media (max-width: 720px) {
       .client-gateway-url-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .client-integration-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -358,6 +426,31 @@
       min-height: 96px;
       resize: vertical;
     }
+
+    .config-diff {
+      width: 100%;
+      min-height: 180px;
+      max-height: 320px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      font: 13px/1.55 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      white-space: pre;
+    }
+
+    .config-diff-line {
+      display: block;
+      min-width: max-content;
+    }
+
+    .config-diff-line.addition { color: #7dffb6; background: rgba(125, 255, 182, 0.08); }
+    .config-diff-line.deletion { color: #ff9d9d; background: rgba(255, 122, 122, 0.08); }
+    .config-diff-line.location,
+    .config-diff-line.header { color: #8ed8ff; }
 
     .main {
       display: grid;
@@ -1205,8 +1298,16 @@
       gap: 8px;
     }
 
-    .model-availability-actions select {
+    .model-availability-actions select,
+    .model-availability-actions input {
       min-width: 220px;
+      flex: 1 1 220px;
+    }
+
+    .model-availability-control {
+      display: grid;
+      gap: 5px;
+      min-width: min(100%, 220px);
       flex: 1 1 220px;
     }
 
@@ -1659,8 +1760,8 @@
           <span id="status-litellm">读取中...</span>
           <div class="service-actions" id="service-actions-litellm"></div>
           <div class="service-info-row">
-            <button class="secondary service-info-button" id="btn-show-litellm-connection-info" type="button">客户端接入配置</button>
-            <button class="help-icon" id="btn-show-litellm-connection-help" type="button" title="用于配置 Codex、Claude Code、Open WebUI 等客户端。" aria-label="客户端接入配置说明">?</button>
+            <button class="secondary service-info-button" id="btn-show-litellm-connection-info" type="button" title="配置 Codex、OpenCode 和 Claude Code"><span class="client-app-icon"><img src="/static/assets/client-icons/codex.svg" alt="Codex"></span><span class="client-app-icon"><img src="/static/assets/client-icons/opencode.svg" alt="OpenCode"></span><span class="client-app-icon"><img src="/static/assets/client-icons/claude-code.svg" alt="Claude Code"></span> 客户端集成</button>
+            <button class="help-icon" id="btn-show-litellm-connection-help" type="button" title="用于配置 Codex、OpenCode 和 Claude Code。" aria-label="客户端集成说明">?</button>
           </div>
         </div>
         <div class="status-chip" title="Open WebUI 是聊天前台界面，适合像 ChatGPT 那样直接聊天使用。它本身不负责路由，而是调用 LiteLLM。">
@@ -1832,12 +1933,31 @@
       <div class="dialog-head">
         <div>
           <div class="dialog-title-row">
-            <h3 id="litellm-models-title">客户端接入配置</h3>
+            <h3 id="litellm-models-title">客户端集成与同步</h3>
             <button class="help-icon" id="btn-show-litellm-client-help" type="button" title="查看两个客户端网关的区别" aria-label="查看客户端网关说明">?</button>
           </div>
-          <div class="helper-text">选择对应客户端的网关地址。详细说明请点击标题旁的 ?。</div>
+          <div class="helper-text">仅同步已发布模型。写入前会备份原配置，RelayDeck 不会覆盖其他客户端供应商。</div>
         </div>
         <button class="dialog-close" id="btn-close-litellm-models-overlay" type="button">关闭</button>
+      </div>
+      <div class="client-integration-grid" id="client-integration-grid">
+        <section class="client-integration-card">
+          <div class="client-integration-title"><span class="client-app-icon"><img src="/static/assets/client-icons/codex.svg" alt=""></span>Codex</div>
+          <div class="helper-text" id="client-integration-codex-status">正在检查配置…</div>
+          <button class="secondary" type="button" data-client-integration="codex">同步 Codex</button>
+          <button class="secondary" type="button" data-client-shortcut-client="codex">模型对应映射</button>
+        </section>
+        <section class="client-integration-card">
+          <div class="client-integration-title"><span class="client-app-icon"><img src="/static/assets/client-icons/opencode.svg" alt=""></span>OpenCode</div>
+          <div class="helper-text" id="client-integration-opencode-status">正在检查配置…</div>
+          <button class="secondary" type="button" data-client-integration="opencode">同步 OpenCode</button>
+        </section>
+        <section class="client-integration-card">
+          <div class="client-integration-title"><span class="client-app-icon"><img src="/static/assets/client-icons/claude-code.svg" alt=""></span>Claude Code</div>
+          <div class="helper-text" id="client-integration-claude-code-status">正在检查配置…</div>
+          <button class="secondary" type="button" data-client-integration="claude-code">同步 Claude Code</button>
+          <button class="secondary" type="button" data-client-shortcut-client="claude_code">模型对应映射</button>
+        </section>
       </div>
       <div class="kv-block">
         <label>Codex / OpenAI 兼容客户端</label>
@@ -1893,8 +2013,8 @@
         <div class="helper-text" id="client-gateway-models-status">打开时正在读取本地网关。</div>
         <div class="provider-actions"><button class="secondary" id="btn-refresh-client-gateway-models" type="button">刷新模型列表</button></div>
         <div class="client-gateway-url-grid">
-          <div><strong>Codex / OpenAI（4100）</strong><div class="helper-text" id="client-openai-model-list">加载中…</div></div>
-          <div><strong>Claude Code（4101）</strong><div class="helper-text" id="client-claude-model-list">加载中…</div></div>
+          <div><strong>Codex / OpenAI（4100）</strong><div class="helper-text client-gateway-model-list" id="client-openai-model-list">加载中…</div></div>
+          <div><strong>Claude Code（4101）</strong><div class="helper-text client-gateway-model-list" id="client-claude-model-list">加载中…</div></div>
         </div>
       </div>
       <div class="kv-block">
@@ -1904,6 +2024,27 @@
           <button class="secondary" id="btn-copy-litellm-models-curl" type="button">复制 curl 命令</button>
         </div>
       </div>
+    </div>
+  </div>
+  <div class="overlay" id="client-shortcuts-overlay" data-open="false"><div class="dialog api-modal-dialog" role="dialog" aria-modal="true"><div class="dialog-head"><div><h3>模型对应映射</h3><div class="helper-text">保存后写入本地映射；网关热切换启用后将影响对应槽位的后续请求。</div></div><button class="dialog-close" id="btn-close-client-shortcuts" type="button">关闭</button></div><div id="client-shortcuts-content"></div><div class="provider-actions"><button class="primary" id="btn-save-client-shortcuts" type="button">保存模型映射</button></div></div></div>
+  <div class="overlay" id="codex-sync-preview-overlay" data-open="false">
+    <div class="dialog utility-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-sync-preview-title">
+      <div class="dialog-head"><div><h3 id="codex-sync-preview-title">同步 Codex 配置预览</h3><div class="helper-text">此窗口不会写入文件。请检查候选内容，确认后才会创建备份并应用。</div></div><button class="dialog-close" id="btn-close-codex-sync-preview" type="button">关闭</button></div>
+      <div class="client-gateway-url-grid"><label>当前 config.toml<textarea id="codex-sync-current" readonly rows="12"></textarea></label><label>RelayDeck 候选配置（可修改）<textarea id="codex-sync-candidate" rows="12"></textarea></label></div>
+      <div class="kv-block"><label>变更摘要</label><pre class="config-diff" id="codex-sync-diff" tabindex="0" aria-label="Codex 配置变更摘要"></pre></div>
+      <div class="kv-block"><label>可恢复备份</label><div class="helper-text" id="codex-sync-backup-summary">会保留历史备份；本次新建的备份会单独标记。</div><select id="codex-sync-backups"><option value="">加载中…</option></select><div class="provider-actions"><button class="secondary" id="btn-refresh-codex-backups" type="button">刷新备份</button><button class="secondary" id="btn-restore-codex-backup" type="button">恢复选中备份</button></div></div>
+      <div class="modal-error" id="codex-sync-preview-error" role="alert" aria-live="polite"></div>
+      <div class="modal-footer"><button class="secondary" id="btn-validate-codex-candidate" type="button">校验配置</button><button class="primary" id="btn-apply-codex-preview" type="button">创建备份并应用</button></div>
+    </div>
+  </div>
+  <div class="overlay" id="claude-sync-preview-overlay" data-open="false">
+    <div class="dialog utility-dialog" role="dialog" aria-modal="true" aria-labelledby="claude-sync-preview-title">
+      <div class="dialog-head"><div><h3 id="claude-sync-preview-title">同步 Claude Code 配置预览</h3><div class="helper-text">此窗口不会写入文件。认证令牌不会显示，确认应用时由 RelayDeck 安全写入。</div></div><button class="dialog-close" id="btn-close-claude-sync-preview" type="button">关闭</button></div>
+      <div class="client-gateway-url-grid"><label>当前 settings.json<textarea id="claude-sync-current" readonly rows="12"></textarea></label><label>RelayDeck 候选配置（可修改）<textarea id="claude-sync-candidate" rows="12"></textarea></label></div>
+      <div class="kv-block"><label>变更摘要</label><pre class="config-diff" id="claude-sync-diff" tabindex="0" aria-label="Claude Code 配置变更摘要"></pre></div>
+      <div class="kv-block"><label>可恢复备份</label><div class="helper-text" id="claude-sync-backup-summary">会保留历史备份；本次新建的备份会单独标记。</div><select id="claude-sync-backups"><option value="">加载中…</option></select><div class="provider-actions"><button class="secondary" id="btn-refresh-claude-backups" type="button">刷新备份</button><button class="secondary" id="btn-restore-claude-backup" type="button">恢复选中备份</button></div></div>
+      <div class="modal-error" id="claude-sync-preview-error" role="alert" aria-live="polite"></div>
+      <div class="modal-footer"><button class="secondary" id="btn-validate-claude-candidate" type="button">校验配置</button><button class="primary" id="btn-apply-claude-preview" type="button">创建备份并应用</button></div>
     </div>
   </div>
   <div class="overlay" id="litellm-connection-help-overlay" data-open="false">
@@ -2160,6 +2301,8 @@
       pendingServiceActions: {},
     };
     let routingDraftTimer = null;
+    let clientShortcutSlots = {};
+    let activeClientShortcut = '';
     const supplierSsoPollers = new Map();
     const supplierSsoQuotaRefreshes = new Set();
 
@@ -2982,6 +3125,7 @@
             ? `路由草稿已保存，但 LiteLLM 网关重载失败：${result.gateway_reload_error}`
             : `已保存路由草稿到 ${result.saved_to || 'config/relaydeck-state.json'}。\n刷新页面后会自动加载。`;
         }
+        return result;
       } catch (error) {
         state.routingDirty = true;
         const message = String(error || '');
@@ -3015,6 +3159,11 @@
         custom_llm_provider: 'openai',
         enabled: true,
       };
+    }
+
+    async function verifyPublishedGatewayModel(modelName) {
+      const result = await api('/api/client-gateway-models');
+      return (result.openai?.models || []).includes(modelName);
     }
 
     function defaultApiProfile(supplierId = '') {
@@ -3919,6 +4068,9 @@
 
     function modelRouteTemplate(route) {
       const bindings = bindingsForRoute(route.id);
+      const legacyNameWarning = route.legacy_invalid_public_model_name
+        ? '<div class="helper-text warn">这个旧公共模型名包含不再支持的字符。请改为英文安全 ID；修复前不能保存路由或批量修改后缀。</div>'
+        : '';
       const selectedInRoute = bindings.some(binding => binding.id === state.selectedBindingId);
       const shouldOpen = state.openRouteIds.includes(route.id) || (!state.openRouteIds.length && selectedInRoute);
       const pinned = isPinnedModelRoute(route.id);
@@ -3989,6 +4141,7 @@
               <div class="helper-text">服务器分类提示词</div>
               <div class="supplier-meta-card">${escapeHtml(classificationPrompt)}</div>
             </div>
+            ${legacyNameWarning}
             <div class="field full">
               <label class="toggle-inline">
                 <span>启用该模型路由</span>
@@ -4885,12 +5038,14 @@
         textarea.addEventListener('input', () => updateApiProfileModels(textarea));
         textarea.addEventListener('change', () => normalizeApiProfileModels(textarea));
       });
-      document.querySelectorAll('[data-raw-model-profile-id]').forEach(select => {
+      document.querySelectorAll('[data-raw-model-route]').forEach(select => {
         select.addEventListener('change', () => updateRawModelRoute(select));
       });
       document.querySelectorAll('[data-raw-model-family]').forEach(select => {
         select.addEventListener('change', () => updateRawModelFamily(select));
       });
+      document.querySelectorAll('[data-raw-model-route-custom]').forEach(input => bindRawModelMappingInput(input, createRawModelRouteFromInput));
+      document.querySelectorAll('[data-raw-model-family-custom]').forEach(input => bindRawModelMappingInput(input, createRawModelFamilyFromInput));
       document.querySelectorAll('[data-availability-search]').forEach(input => {
         input.addEventListener('input', () => {
           const profileId = input.dataset.availabilitySearch;
@@ -5190,6 +5345,28 @@
       return parts.length > 1 ? parts[parts.length - 1] : raw;
     }
 
+    function validatePublicModelName(value) {
+      const name = String(value || '').trim();
+      if (!name) {
+        return { ok: false, message: '请填写公共模型名称' };
+      }
+      if (/[\x00-\x1F\x7F]/.test(name)) {
+        return { ok: false, message: '公共模型名称不能包含控制字符。' };
+      }
+      return { ok: true, value: name };
+    }
+
+    function validatePublicModelSuffix(value) {
+      const suffix = String(value || '').trim();
+      if (!suffix) {
+        return { ok: false, message: '请先输入公共模型后缀，例如 -lingsuan' };
+      }
+      if (/[\x00-\x1F\x7F]/.test(suffix)) {
+        return { ok: false, message: '公共模型后缀不能包含控制字符。' };
+      }
+      return { ok: true, value: suffix };
+    }
+
     function nextBindingPriority(routeId) {
       const bindings = bindingsForRoute(routeId);
       if (!bindings.length) return 100;
@@ -5276,6 +5453,16 @@
       const route = routeById(input.dataset.routeId);
       if (!route) return;
       const key = input.dataset.routeKey;
+      if (key === 'public_model_name') {
+        const validation = validatePublicModelName(input.value);
+        if (!validation.ok) {
+          input.value = route.public_model_name || '';
+          setRoutingSaveStatus(validation.message, 'warn', true);
+          return;
+        }
+        input.value = validation.value;
+        route.legacy_invalid_public_model_name = false;
+      }
       route[key] = input.type === 'checkbox' ? input.checked : input.value;
       if (key === 'model_family' || key === 'category') {
         route.model_family = route[key];
@@ -5366,30 +5553,85 @@
       ].join('');
     }
 
-    function updateRawModelFamily(select) {
-      const profile = apiProfileById(select.dataset.rawModelProfileId);
-      const rawModel = String(select.dataset.rawModelName || '').trim();
-      if (!profile || !rawModel) return;
-      profile.raw_model_families = profile.raw_model_families && typeof profile.raw_model_families === 'object' ? profile.raw_model_families : {};
-      profile.raw_model_families[normalizeBindingModelKey(rawModel)] = String(select.value || '').trim();
-      markRoutingDirty();
-      renderAll();
+    function bindRawModelMappingInput(input, applyValue) {
+      input.addEventListener('change', () => applyValue(input));
+      input.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        applyValue(input);
+      });
     }
 
-    function updateRawModelRoute(select) {
-      const profile = apiProfileById(select.dataset.rawModelProfileId);
-      const upstreamModel = String(select.dataset.rawModelName || '').trim();
-      let routeId = String(select.value || '').trim();
+    function createRawModelFamilyFromInput(input) {
+      if (!String(input.value || '').trim()) return;
+      updateRawModelFamily(input);
+    }
+
+    function createRawModelRouteFromInput(input) {
+      if (!String(input.value || '').trim()) return;
+      updateRawModelRoute(input);
+    }
+
+    function updateRawModelFamily(input) {
+      const profile = apiProfileById(input.dataset.rawModelProfileId);
+      const rawModel = String(input.dataset.rawModelName || '').trim();
+      if (!profile || !rawModel) return;
+      const family = String(input.value || '').trim();
+      refreshModelFamilies();
+      const created = Boolean(family) && !(state.modelFamilies || []).includes(family);
+      profile.raw_model_families = profile.raw_model_families && typeof profile.raw_model_families === 'object' ? profile.raw_model_families : {};
+      profile.raw_model_families[normalizeBindingModelKey(rawModel)] = family;
+      if (family) createModelFamily(family);
+      markRoutingDirty();
+      renderAll();
+      setRoutingSaveStatus(created ? `已新建模型系列：${family}` : '已更新原始模型所属系列', 'ok', true);
+    }
+
+    function findOrCreateRawModelRoute(publicModelName, family) {
+      const validation = validatePublicModelName(publicModelName);
+      if (!validation.ok) return null;
+      const name = validation.value;
+      const existing = state.modelRoutes.find(item => String(item.public_model_name || '').trim() === name);
+      if (existing) return { route: existing, created: false };
+      const route = defaultModelRoute();
+      route.public_model_name = name;
+      route.display_name = name;
+      route.model_family = String(family || '').trim();
+      state.modelRoutes.push(route);
+      if (route.model_family) createModelFamily(route.model_family);
+      return { route, created: true };
+    }
+
+    function updateRawModelRoute(input) {
+      const profile = apiProfileById(input.dataset.rawModelProfileId);
+      const upstreamModel = String(input.dataset.rawModelName || '').trim();
+      let routeId = String(input.value || '').trim();
       if (!profile || !upstreamModel || !routeId) return;
       const family = rawModelFamily(profile, upstreamModel);
+      let result = null;
       if (routeId === '__raw_model_name__') {
-        let route = state.modelRoutes.find(item => String(item.public_model_name || '') === upstreamModel);
-        if (!route) {
-          route = { id: makeId('route'), public_model_name: upstreamModel, display_name: upstreamModel, model_family: family, routing_strategy: 'simple-shuffle', enabled: true, gateway_enabled: false };
-          state.modelRoutes.push(route);
+        const validation = validatePublicModelName(upstreamModel);
+        if (!validation.ok) {
+          setRoutingSaveStatus(validation.message, 'warn', true);
+          return;
         }
-        routeId = route.id;
+        result = findOrCreateRawModelRoute(upstreamModel, family);
+      } else {
+        const route = routeById(routeId);
+        if (route) {
+          result = { route, created: false };
+        } else {
+          const validation = validatePublicModelName(routeId);
+          if (!validation.ok) {
+            setRoutingSaveStatus(validation.message, 'warn', true);
+            input.value = '';
+            return;
+          }
+          result = findOrCreateRawModelRoute(validation.value, family);
+        }
       }
+      if (!result) return;
+      routeId = result.route.id;
       const rawKey = normalizeBindingModelKey(upstreamModel);
       const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === rawKey);
       const existing = candidates.find(binding => binding.model_route_id === routeId) || candidates[0];
@@ -5410,7 +5652,162 @@
       state.selectedBindingId = binding.id;
       markRoutingDirty();
       renderAll();
-      setRoutingSaveStatus(`已将 ${upstreamModel} 映射到公共模型`, 'ok', true);
+      setRoutingSaveStatus(result.created ? `已新建公共模型：${result.route.public_model_name}` : `已将 ${upstreamModel} 映射到公共模型`, 'ok', true);
+    }
+
+    async function applyApiModelSuffix(profileId, suffix) {
+      const profile = apiProfileById(profileId);
+      const validation = validatePublicModelSuffix(suffix);
+      if (!validation.ok) {
+        setRoutingSaveStatus(validation.message, 'warn', true);
+        return false;
+      }
+      const value = validation.value;
+      const models = [...new Set((Array.isArray(profile?.known_models) ? profile.known_models : []).map(item => String(item || '').trim()).filter(Boolean))];
+      if (!profile || !value || !models.length) {
+        setRoutingSaveStatus('当前 API 没有已同步的模型，无法批量加入后缀', 'warn', true);
+        showFloatingActionNotice('当前 API 没有已同步的模型，无法批量加入后缀', 'warn');
+        return false;
+      }
+
+      const legacyRoute = models
+        .map(upstreamModel => {
+          const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === normalizeBindingModelKey(upstreamModel));
+          const activeBinding = candidates.find(binding => !binding.mapping_conflict && binding.enabled !== false) || candidates[0];
+          return routeById(activeBinding?.model_route_id || '');
+        })
+        .find(route => route?.legacy_invalid_public_model_name || !validatePublicModelName(route?.public_model_name || '').ok);
+      if (legacyRoute) {
+        setRoutingSaveStatus(`请先修复旧公共模型名「${legacyRoute.public_model_name}」后再批量加入后缀`, 'warn', true);
+        return false;
+      }
+
+      const confirmed = window.confirm(`将为当前 API 已同步的 ${models.length} 个模型创建或复用带后缀「${value}」的公共模型映射。\n\n此操作只修改当前路由草稿，点击“保存并应用”后才会发布到网关。`);
+      if (!confirmed) {
+        showFloatingActionNotice('已取消批量加入后缀，路由草稿未修改', 'warn');
+        return false;
+      }
+
+      const progressMessage = `正在批量加入后缀「${value}」，并保存路由草稿...`;
+      setRoutingSaveStatus(progressMessage, 'saving', true);
+      showFloatingActionNotice(progressMessage, 'saving');
+
+      let createdCount = 0;
+      models.forEach(upstreamModel => {
+        const rawKey = normalizeBindingModelKey(upstreamModel);
+        const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === rawKey);
+        const activeBinding = candidates.find(binding => !binding.mapping_conflict && binding.enabled !== false) || candidates[0];
+        const sourceRoute = routeById(activeBinding?.model_route_id || '');
+        const sourceName = String(sourceRoute?.public_model_name || upstreamModel).trim();
+        const targetName = sourceName.endsWith(value) ? sourceName : `${sourceName}${value}`;
+        const family = rawModelFamily(profile, upstreamModel, candidates);
+        const result = findOrCreateRawModelRoute(targetName, family);
+        if (!result) return;
+        if (result.created) createdCount += 1;
+
+        const existing = candidates.find(binding => binding.model_route_id === result.route.id) || candidates[0];
+        state.routeBindings = state.routeBindings.filter(binding => !(
+          binding.api_profile_id === profile.id && normalizeBindingModelKey(binding.upstream_model || '') === rawKey
+        ));
+        const binding = existing || defaultRouteBinding(result.route.id, profile.id);
+        binding.model_route_id = result.route.id;
+        binding.upstream_model = upstreamModel;
+        binding.enabled = true;
+        delete binding.mapping_conflict;
+        delete binding.mapping_conflict_reason;
+        delete binding.sync_state;
+        delete binding.sync_reason;
+        delete binding.sync_checked_at;
+        delete binding.sync_disabled_by_sync;
+        state.routeBindings.push(binding);
+      });
+
+      markRoutingDirty({ autosave: false });
+      renderAll();
+      try {
+        await saveRoutingDraft({ silent: false });
+        const successMessage = `已批量加入后缀并保存路由草稿：${models.length} 个映射，其中新建 ${createdCount} 个`;
+        setRoutingSaveStatus(successMessage, 'ok', true);
+        showFloatingActionNotice(successMessage, 'ok');
+        return true;
+      } catch (error) {
+        const failureMessage = `批量加入后缀但保存路由草稿失败：${String(error || '未知错误')}`;
+        setRoutingSaveStatus('批量加入后缀但保存路由草稿失败', 'fail', true);
+        showFloatingActionNotice(failureMessage, 'fail');
+        return false;
+      }
+    }
+
+    async function removeApiModelSuffix(profileId, suffix) {
+      const profile = apiProfileById(profileId);
+      const validation = validatePublicModelSuffix(suffix);
+      if (!validation.ok) {
+        setRoutingSaveStatus(validation.message, 'warn', true);
+        return false;
+      }
+      const value = validation.value;
+      const models = [...new Set((Array.isArray(profile?.known_models) ? profile.known_models : []).map(item => String(item || '').trim()).filter(Boolean))];
+      if (!profile || !value || !models.length) return false;
+
+      const affectedModels = models.filter(upstreamModel => {
+        const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === normalizeBindingModelKey(upstreamModel));
+        const activeBinding = candidates.find(binding => !binding.mapping_conflict && binding.enabled !== false) || candidates[0];
+        return String(routeById(activeBinding?.model_route_id || '')?.public_model_name || '').endsWith(value);
+      });
+      if (!affectedModels.length) {
+        setRoutingSaveStatus(`当前 API 没有公共模型名以「${value}」结尾的映射`, 'warn', true);
+        return false;
+      }
+
+      const legacyRoute = affectedModels
+        .map(upstreamModel => {
+          const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === normalizeBindingModelKey(upstreamModel));
+          const activeBinding = candidates.find(binding => !binding.mapping_conflict && binding.enabled !== false) || candidates[0];
+          return routeById(activeBinding?.model_route_id || '');
+        })
+        .find(route => route?.legacy_invalid_public_model_name || !validatePublicModelName(route?.public_model_name || '').ok);
+      if (legacyRoute) {
+        setRoutingSaveStatus(`请先修复旧公共模型名「${legacyRoute.public_model_name}」后再批量移除后缀`, 'warn', true);
+        return false;
+      }
+
+      const confirmed = window.confirm(`将从当前 API 的 ${affectedModels.length} 个公共模型映射中移除后缀「${value}」。\n\n不会删除公共模型路由；操作先修改路由草稿，点击“保存并应用”后才会发布到网关。`);
+      if (!confirmed) return false;
+
+      let createdCount = 0;
+      affectedModels.forEach(upstreamModel => {
+        const rawKey = normalizeBindingModelKey(upstreamModel);
+        const candidates = bindingsForApiProfile(profile.id).filter(binding => normalizeBindingModelKey(binding.upstream_model || '') === rawKey);
+        const activeBinding = candidates.find(binding => !binding.mapping_conflict && binding.enabled !== false) || candidates[0];
+        const sourceRoute = routeById(activeBinding?.model_route_id || '');
+        const sourceName = String(sourceRoute?.public_model_name || '').trim();
+        const targetName = sourceName.slice(0, -value.length).trim();
+        if (!targetName) return;
+        const result = findOrCreateRawModelRoute(targetName, rawModelFamily(profile, upstreamModel, candidates));
+        if (!result) return;
+        if (result.created) createdCount += 1;
+
+        const existing = candidates.find(binding => binding.model_route_id === result.route.id) || candidates[0];
+        state.routeBindings = state.routeBindings.filter(binding => !(
+          binding.api_profile_id === profile.id && normalizeBindingModelKey(binding.upstream_model || '') === rawKey
+        ));
+        const binding = existing || defaultRouteBinding(result.route.id, profile.id);
+        binding.model_route_id = result.route.id;
+        binding.upstream_model = upstreamModel;
+        binding.enabled = true;
+        delete binding.mapping_conflict;
+        delete binding.mapping_conflict_reason;
+        delete binding.sync_state;
+        delete binding.sync_reason;
+        delete binding.sync_checked_at;
+        delete binding.sync_disabled_by_sync;
+        state.routeBindings.push(binding);
+      });
+
+      markRoutingDirty();
+      renderAll();
+      setRoutingSaveStatus(`已批量移除后缀：恢复 ${affectedModels.length} 个公共模型映射，其中新建 ${createdCount} 个`, 'ok', true);
+      return true;
     }
 
     function supplierCredentialUpdates(platformKey) {
@@ -5854,6 +6251,19 @@
         const routeId = button.dataset.routeId;
         if (!routeId) return;
         togglePinnedModelRoute(routeId);
+        const route = routeById(routeId);
+        if (route?.gateway_enabled) {
+          try {
+            await saveRoutingDraft({ silent: false });
+            if (await verifyPublishedGatewayModel(route.public_model_name)) {
+              setRoutingSaveStatus(`已发布并已在网关模型列表中确认：${route.public_model_name}`, 'ok', true);
+            } else {
+              setRoutingSaveStatus(`网关重载完成，但尚未发现模型：${route.public_model_name}`, 'fail', true);
+            }
+          } catch (_) {
+            setRoutingSaveStatus(`发布失败：${route.public_model_name}`, 'fail', true);
+          }
+        }
         return;
       }
       if (action === 'toggle-pin-model-family') {
@@ -5951,6 +6361,38 @@
           enabled: true,
         }, 'dialog', button);
       }
+      if (action === 'apply-api-model-suffix') {
+        const profileId = button.dataset.apiProfileId || '';
+        const input = document.querySelector(`[data-api-model-suffix="${CSS.escape(profileId)}"]`);
+        if (!input) return;
+        if (!String(input.value || '').trim()) {
+          setRoutingSaveStatus('请先输入要附加到公共模型名的后缀，例如 -lingsuan', 'warn', true);
+          input.focus();
+          return;
+        }
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = '处理中...';
+        try {
+          await applyApiModelSuffix(profileId, input.value);
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+        return;
+      }
+      if (action === 'remove-api-model-suffix') {
+        const profileId = button.dataset.apiProfileId || '';
+        const input = document.querySelector(`[data-api-model-suffix="${CSS.escape(profileId)}"]`);
+        if (!input) return;
+        if (!String(input.value || '').trim()) {
+          setRoutingSaveStatus('请先输入需要移除的后缀，例如 -lingsuan', 'warn', true);
+          input.focus();
+          return;
+        }
+        removeApiModelSuffix(profileId, input.value);
+        return;
+      }
       if (action === 'attach-raw-model') {
         const routeId = button.dataset.routeId;
         const apiProfileId = button.dataset.apiProfileId;
@@ -6003,7 +6445,12 @@
         const family = String(button.dataset.modelFamily || '').trim();
         const routeName = window.prompt(`在「${family || '未分家族'}」下新增公共模型名，例如 gpt-5.4`, '');
         if (!routeName || !routeName.trim()) return;
-        const publicModelName = routeName.trim();
+        const validation = validatePublicModelName(routeName);
+        if (!validation.ok) {
+          setRoutingSaveStatus(validation.message, 'warn', true);
+          return;
+        }
+        const publicModelName = validation.value;
         let route = state.modelRoutes.find(item => String(item.public_model_name || '') === publicModelName);
         if (route) {
           route.model_family = family;
@@ -6600,9 +7047,342 @@
     }
 
     async function configureClaudeCodeDiscovery() {
-      const result = await api('/api/clients/claude-code/configure', { method: 'POST' });
-      setRoutingSaveStatus('Claude Code 已配置，请完全退出后重新启动 Claude Code。', 'ok', true);
-      el('test-result').textContent = `Claude Code 配置已写入：${result.settings_path}\n备份：${result.backup_path || '首次创建，无需备份'}`;
+      await applyClientIntegration('claude-code');
+    }
+
+    function integrationStatusText(client, publishedModels) {
+      const configured = client?.configured ? '已检测到配置' : '尚未配置';
+      return `${configured}；将同步 ${publishedModels} 个已发布模型。`;
+    }
+
+    async function refreshClientIntegrations() {
+      const targets = {
+        codex: el('client-integration-codex-status'),
+        opencode: el('client-integration-opencode-status'),
+        claude_code: el('client-integration-claude-code-status'),
+      };
+      Object.values(targets).forEach(node => { node.textContent = '正在检查配置…'; });
+      try {
+        const result = await api('/api/client-integrations');
+        const count = (result.models || []).length;
+        Object.entries(targets).forEach(([name, node]) => {
+          node.textContent = integrationStatusText((result.clients || {})[name], count);
+        });
+      } catch (_error) {
+        Object.values(targets).forEach(node => { node.textContent = '无法读取集成状态，请确认管理台正在运行。'; });
+      }
+    }
+
+    function appendClaudeShortcutRow(target, entry, models) {
+      const row = document.createElement('div'); row.className = 'kv-block'; row.dataset.claudeShortcutRow = 'true';
+      const name = document.createElement('input'); name.value = entry.name || ''; name.placeholder = '例如 claude-opus-5'; name.dataset.claudeShortcutName = 'true';
+      const tier = document.createElement('select'); tier.dataset.claudeShortcutTier = 'true';
+      ['haiku', 'sonnet', 'opus', 'fable'].forEach(value => tier.append(new Option(value, value, false, value === entry.tier)));
+      const mapping = document.createElement('select'); mapping.dataset.claudeShortcutTarget = 'true'; mapping.append(new Option('选择已发布公共模型（未映射）', ''));
+      models.forEach(model => mapping.append(new Option(model.display_name || model.id, model.id, false, model.id === entry.target)));
+      const remove = document.createElement('button'); remove.className = 'danger'; remove.type = 'button'; remove.textContent = '删除'; remove.onclick = () => row.remove();
+      const nameField = document.createElement('label'); nameField.textContent = '客户端模型名称'; nameField.append(name);
+      const tierField = document.createElement('label'); tierField.textContent = 'Claude 类型'; tierField.append(tier);
+      const mappingField = document.createElement('label'); mappingField.textContent = '映射公共模型'; mappingField.append(mapping);
+      row.append(nameField, tierField, mappingField, remove); target.appendChild(row);
+    }
+
+    async function showClientShortcuts(client) {
+      const result = await api('/api/client-shortcuts');
+      const models = result.models || []; const slots = result.slots || {};
+      clientShortcutSlots = slots;
+      activeClientShortcut = client;
+      const labels = { codex: 'Codex', claude_code: 'Claude Code' };
+      const block = document.createElement('div'); block.className = 'kv-block';
+      const title = document.createElement('label'); title.textContent = labels[client] || client; block.appendChild(title);
+      if (client === 'claude_code') {
+        const rows = Array.isArray(slots[client]) ? slots[client] : [];
+        const helper = document.createElement('div'); helper.className = 'helper-text'; helper.textContent = '模型名称由 Claude Code 识别；版本号可自行维护。Claude 类型决定 Anthropic 兼容层。'; block.appendChild(helper);
+        rows.forEach(entry => appendClaudeShortcutRow(block, entry, models));
+        const add = document.createElement('button'); add.className = 'secondary'; add.type = 'button'; add.textContent = '新增模型映射'; add.onclick = () => appendClaudeShortcutRow(block, { name: '', tier: 'sonnet', target: '' }, models); block.appendChild(add);
+      } else {
+        Object.entries(slots[client] || {}).forEach(([slot, target]) => { const select = document.createElement('select'); select.dataset.shortcutClient = client; select.dataset.shortcutSlot = slot; select.append(new Option(`${slot}（未映射）`, '')); models.forEach(model => select.append(new Option(model.display_name || model.id, model.id, false, model.id === target))); const row = document.createElement('div'); row.className = 'provider-actions'; row.append(document.createTextNode(`${slot} -> `), select); block.appendChild(row); });
+      }
+      el('client-shortcuts-content').replaceChildren(block);
+      el('client-shortcuts-overlay').dataset.open = 'true';
+    }
+
+    async function saveClientShortcuts() {
+      const slots = {
+        codex: { ...(clientShortcutSlots.codex || {}) },
+        claude_code: (clientShortcutSlots.claude_code || []).map(row => ({ ...row })),
+      };
+      if (activeClientShortcut === 'claude_code') {
+        slots.claude_code = Array.from(document.querySelectorAll('[data-claude-shortcut-row]')).map(row => ({
+          name: row.querySelector('[data-claude-shortcut-name]').value.trim(),
+          tier: row.querySelector('[data-claude-shortcut-tier]').value,
+          target: row.querySelector('[data-claude-shortcut-target]').value,
+        })).filter(row => row.name);
+      } else {
+        document.querySelectorAll('[data-shortcut-client]').forEach(select => { const client = select.dataset.shortcutClient; slots[client] ||= {}; slots[client][select.dataset.shortcutSlot] = select.value; });
+      }
+      await api('/api/client-shortcuts', { method: 'PUT', body: JSON.stringify({ slots }) });
+      setRoutingSaveStatus('模型对应映射已保存。网关热切换启用后将立即作用于后续请求。', 'ok', true);
+      el('client-shortcuts-overlay').dataset.open = 'false';
+    }
+
+    async function applyClientIntegration(clientName, triggerButton = null) {
+      const labels = { codex: 'Codex', opencode: 'OpenCode', 'claude-code': 'Claude Code' };
+      const label = labels[clientName] || clientName;
+      const statusId = clientName === 'claude-code'
+        ? 'client-integration-claude-code-status'
+        : `client-integration-${clientName}-status`;
+      const status = el(statusId);
+      const initialButtonText = triggerButton?.textContent || `同步 ${label}`;
+      if (triggerButton) {
+        triggerButton.disabled = true;
+        triggerButton.textContent = `正在同步 ${label}…`;
+      }
+      if (status) status.textContent = `正在同步 ${label} 配置，请稍候…`;
+      setRoutingSaveStatus(`正在同步 ${label} 配置…`, 'muted', true);
+      showFloatingActionNotice(`正在同步 ${label} 配置…`, 'saving', { persistent: true });
+      try {
+        const result = await api(`/api/client-integrations/${clientName}/apply`, { method: 'POST' });
+        const message = `${label} 已同步 ${result.model_count || 0} 个已发布模型。请完全退出后重新启动客户端。`;
+        setRoutingSaveStatus(message, 'ok', true);
+        showFloatingActionNotice(message, 'ok', { durationMs: 9000 });
+        el('test-result').textContent = `${label} 配置已写入：${result.config_path || result.settings_path}\n备份：${result.backup_path || '首次创建，无需备份'}`;
+        await refreshClientIntegrations();
+        if (status) status.textContent = message;
+      } catch (error) {
+        const message = `${label} 同步失败：${error?.message || '请检查管理台提示'}`;
+        setRoutingSaveStatus(message, 'fail', true);
+        if (status) status.textContent = message;
+        showFloatingActionNotice(message, 'fail', { persistent: true });
+      } finally {
+        if (triggerButton) {
+          triggerButton.disabled = false;
+          triggerButton.textContent = initialButtonText;
+        }
+      }
+    }
+
+    function setCodexSyncPreviewError(message = '') {
+      el('codex-sync-preview-error').textContent = message;
+    }
+
+    async function refreshCodexBackups(newestBackupName = '') {
+      const select = el('codex-sync-backups');
+      const summary = el('codex-sync-backup-summary');
+      select.replaceChildren(new Option('加载备份中…', ''));
+      try {
+        const result = await api('/api/client-integrations/codex/backups');
+        const backups = result.backups || [];
+        select.replaceChildren(new Option(backups.length ? '选择要恢复的备份' : '暂无可恢复备份', ''));
+        backups.forEach(item => {
+          const isNew = item.name === newestBackupName;
+          select.append(new Option(`${isNew ? '本次创建 - ' : ''}${item.name} (${Math.max(1, Math.ceil((item.size || 0) / 1024))} KB)`, item.name, false, isNew));
+        });
+        summary.textContent = newestBackupName
+          ? `本次已创建备份：${newestBackupName}。其余为此前保留的历史备份。`
+          : `当前共有 ${backups.length} 份历史备份；恢复前会自动再备份当前配置。`;
+      } catch (error) {
+        select.replaceChildren(new Option('无法读取备份', ''));
+        summary.textContent = '备份列表读取失败。';
+        setCodexSyncPreviewError(`读取备份失败：${error?.message || '未知错误'}`);
+      }
+    }
+
+    function renderConfigDiff(targetId, diff) {
+      const target = el(targetId);
+      target.replaceChildren();
+      const lines = String(diff || '没有检测到变更。').split('\n');
+      lines.forEach(line => {
+        const row = document.createElement('span');
+        row.className = 'config-diff-line';
+        if (line.startsWith('+++') || line.startsWith('---')) row.classList.add('header');
+        else if (line.startsWith('@@')) row.classList.add('location');
+        else if (line.startsWith('+')) row.classList.add('addition');
+        else if (line.startsWith('-')) row.classList.add('deletion');
+        row.textContent = line || ' ';
+        target.appendChild(row);
+      });
+    }
+
+    async function showCodexSyncPreview() {
+      setRoutingSaveStatus('正在生成 Codex 配置预览…', 'muted', true);
+      setCodexSyncPreviewError('');
+      try {
+        const result = await api('/api/client-integrations/codex/preview');
+        el('codex-sync-current').value = result.current || '';
+        el('codex-sync-candidate').value = result.candidate || '';
+        renderConfigDiff('codex-sync-diff', result.diff);
+        el('codex-sync-preview-overlay').dataset.open = 'true';
+        await refreshCodexBackups();
+        setRoutingSaveStatus('Codex 配置预览已生成，尚未写入文件。', 'ok', true);
+      } catch (error) {
+        setRoutingSaveStatus(`无法生成 Codex 配置预览：${error?.message || '未知错误'}`, 'fail', true);
+      }
+    }
+
+    async function validateCodexCandidate() {
+      setCodexSyncPreviewError('');
+      showFloatingActionNotice('正在校验 Codex 配置语法…', 'saving', { persistent: true });
+      try {
+        await api('/api/client-integrations/codex/validate-preview', { method: 'POST', body: JSON.stringify({ candidate: el('codex-sync-candidate').value }) });
+        setCodexSyncPreviewError('配置语法校验通过。');
+        showFloatingActionNotice('Codex 配置语法校验通过，尚未写入文件。', 'ok');
+      } catch (error) {
+        setCodexSyncPreviewError(`配置校验失败：${error?.message || '未知错误'}`);
+        showFloatingActionNotice('Codex 配置校验失败，文件未修改。', 'fail', { persistent: true });
+      }
+    }
+
+    async function applyCodexPreview() {
+      setCodexSyncPreviewError('');
+      const button = el('btn-apply-codex-preview');
+      button.disabled = true;
+      button.textContent = '正在创建备份并应用…';
+      showFloatingActionNotice('正在创建 Codex 配置备份并应用候选配置…', 'saving', { persistent: true });
+      try {
+        const result = await api('/api/client-integrations/codex/apply-preview', { method: 'POST', body: JSON.stringify({ candidate: el('codex-sync-candidate').value }) });
+        const backupName = (result.backup_path || '').split(/[/\\]/).pop() || '';
+        const message = `Codex 配置已应用；已创建备份 ${backupName || '（首次创建，无旧配置可备份）'}。请完全退出后重新启动 Codex。`;
+        setRoutingSaveStatus(message, 'ok', true);
+        setCodexSyncPreviewError(message);
+        showFloatingActionNotice(message, 'ok', { durationMs: 9000 });
+        el('test-result').textContent = `Codex 配置已写入：${result.config_path}\n备份：${result.backup_path || '首次创建，无需备份'}`;
+        await refreshCodexBackups(backupName);
+        await refreshClientIntegrations();
+      } catch (error) {
+        setCodexSyncPreviewError(`应用失败，原配置已保留：${error?.message || '未知错误'}`);
+        showFloatingActionNotice('Codex 配置应用失败，原配置已保留。', 'fail', { persistent: true });
+      } finally {
+        button.disabled = false;
+        button.textContent = '创建备份并应用';
+      }
+    }
+
+    async function restoreCodexBackup() {
+      const backupName = el('codex-sync-backups').value;
+      if (!backupName) {
+        setCodexSyncPreviewError('请先选择一个备份。');
+        return;
+      }
+      setCodexSyncPreviewError('');
+      showFloatingActionNotice('正在恢复选中的 Codex 配置备份…', 'saving', { persistent: true });
+      try {
+        await api(`/api/client-integrations/codex/backups/${encodeURIComponent(backupName)}/restore`, { method: 'POST' });
+        setRoutingSaveStatus('已恢复 Codex 配置备份，并已备份恢复前的当前配置。', 'ok', true);
+        setCodexSyncPreviewError('已恢复所选备份；恢复前的当前配置也已自动备份。');
+        showFloatingActionNotice('已恢复 Codex 配置备份；恢复前版本已自动备份。', 'ok', { durationMs: 9000 });
+        await refreshCodexBackups();
+        await refreshClientIntegrations();
+      } catch (error) {
+        setCodexSyncPreviewError(`恢复失败：${error?.message || '未知错误'}`);
+        showFloatingActionNotice('Codex 备份恢复失败，当前配置未修改。', 'fail', { persistent: true });
+      }
+    }
+
+    function setClaudeSyncPreviewError(message = '') {
+      el('claude-sync-preview-error').textContent = message;
+    }
+
+    async function refreshClaudeBackups(newestBackupName = '') {
+      const select = el('claude-sync-backups');
+      const summary = el('claude-sync-backup-summary');
+      select.replaceChildren(new Option('加载备份中…', ''));
+      try {
+        const result = await api('/api/client-integrations/claude-code/backups');
+        const backups = result.backups || [];
+        select.replaceChildren(new Option(backups.length ? '选择要恢复的备份' : '暂无可恢复备份', ''));
+        backups.forEach(item => {
+          const isNew = item.name === newestBackupName;
+          select.append(new Option(`${isNew ? '本次创建 - ' : ''}${item.name} (${Math.max(1, Math.ceil((item.size || 0) / 1024))} KB)`, item.name, false, isNew));
+        });
+        summary.textContent = newestBackupName
+          ? `本次已创建备份：${newestBackupName}。其余为此前保留的历史备份。`
+          : `当前共有 ${backups.length} 份历史备份；恢复前会自动再备份当前配置。`;
+      } catch (error) {
+        select.replaceChildren(new Option('无法读取备份', ''));
+        summary.textContent = '备份列表读取失败。';
+        setClaudeSyncPreviewError(`读取备份失败：${error?.message || '未知错误'}`);
+      }
+    }
+
+    async function showClaudeSyncPreview() {
+      setRoutingSaveStatus('正在生成 Claude Code 配置预览…', 'muted', true);
+      setClaudeSyncPreviewError('');
+      try {
+        const result = await api('/api/client-integrations/claude-code/preview');
+        el('claude-sync-current').value = result.current || '';
+        el('claude-sync-candidate').value = result.candidate || '';
+        renderConfigDiff('claude-sync-diff', result.diff);
+        el('claude-sync-preview-overlay').dataset.open = 'true';
+        await refreshClaudeBackups();
+        const message = 'Claude Code 配置预览已生成，尚未写入文件。';
+        setRoutingSaveStatus(message, 'ok', true);
+        showFloatingActionNotice(message, 'ok');
+      } catch (error) {
+        const message = `无法生成 Claude Code 配置预览：${error?.message || '未知错误'}`;
+        setRoutingSaveStatus(message, 'fail', true);
+        showFloatingActionNotice(message, 'fail', { persistent: true });
+      }
+    }
+
+    async function validateClaudeCandidate() {
+      setClaudeSyncPreviewError('');
+      showFloatingActionNotice('正在校验 Claude Code 配置语法…', 'saving', { persistent: true });
+      try {
+        await api('/api/client-integrations/claude-code/validate-preview', { method: 'POST', body: JSON.stringify({ candidate: el('claude-sync-candidate').value }) });
+        setClaudeSyncPreviewError('配置语法校验通过。');
+        showFloatingActionNotice('Claude Code 配置语法校验通过，尚未写入文件。', 'ok');
+      } catch (error) {
+        setClaudeSyncPreviewError(`配置校验失败：${error?.message || '未知错误'}`);
+        showFloatingActionNotice('Claude Code 配置校验失败，文件未修改。', 'fail', { persistent: true });
+      }
+    }
+
+    async function applyClaudePreview() {
+      setClaudeSyncPreviewError('');
+      const button = el('btn-apply-claude-preview');
+      button.disabled = true;
+      button.textContent = '正在创建备份并应用…';
+      showFloatingActionNotice('正在创建 Claude Code 配置备份并应用候选配置…', 'saving', { persistent: true });
+      try {
+        const result = await api('/api/client-integrations/claude-code/apply-preview', { method: 'POST', body: JSON.stringify({ candidate: el('claude-sync-candidate').value }) });
+        const backupName = (result.backup_path || '').split(/[/\\]/).pop() || '';
+        const message = `Claude Code 配置已应用；已创建备份 ${backupName || '（首次创建，无旧配置可备份）'}。请完全退出后重新启动 Claude Code。`;
+        setRoutingSaveStatus(message, 'ok', true);
+        setClaudeSyncPreviewError(message);
+        showFloatingActionNotice(message, 'ok', { durationMs: 9000 });
+        el('test-result').textContent = `Claude Code 配置已写入：${result.settings_path}\n备份：${result.backup_path || '首次创建，无需备份'}`;
+        await refreshClaudeBackups(backupName);
+        await refreshClientIntegrations();
+      } catch (error) {
+        setClaudeSyncPreviewError(`应用失败，原配置已保留：${error?.message || '未知错误'}`);
+        showFloatingActionNotice('Claude Code 配置应用失败，原配置已保留。', 'fail', { persistent: true });
+      } finally {
+        button.disabled = false;
+        button.textContent = '创建备份并应用';
+      }
+    }
+
+    async function restoreClaudeBackup() {
+      const backupName = el('claude-sync-backups').value;
+      if (!backupName) {
+        setClaudeSyncPreviewError('请先选择一个备份。');
+        return;
+      }
+      setClaudeSyncPreviewError('');
+      showFloatingActionNotice('正在恢复选中的 Claude Code 配置备份…', 'saving', { persistent: true });
+      try {
+        await api(`/api/client-integrations/claude-code/backups/${encodeURIComponent(backupName)}/restore`, { method: 'POST' });
+        const message = '已恢复 Claude Code 配置备份；恢复前的当前配置也已自动备份。';
+        setRoutingSaveStatus(message, 'ok', true);
+        setClaudeSyncPreviewError(message);
+        showFloatingActionNotice(message, 'ok', { durationMs: 9000 });
+        await refreshClaudeBackups();
+        await refreshClientIntegrations();
+      } catch (error) {
+        setClaudeSyncPreviewError(`恢复失败：${error?.message || '未知错误'}`);
+        showFloatingActionNotice('Claude Code 备份恢复失败，当前配置未修改。', 'fail', { persistent: true });
+      }
     }
 
     async function copyTextToClipboard(text, successMessage) {
@@ -6658,6 +7438,7 @@
       el('litellm-auth-scheme').textContent = currentLiteLlmAuthScheme();
       el('litellm-models-curl').value = currentLiteLlmCurlCommand();
       el('litellm-models-overlay').dataset.open = 'true';
+      refreshClientIntegrations();
       refreshClientGatewayModels();
     }
 
@@ -6668,10 +7449,25 @@
       try {
         const result = await api('/api/client-gateway-models');
         const openai = result.openai || {}; const claude = result.claude || {};
-        el('client-openai-model-list').textContent = openai.error || ((openai.models || []).join('、') || '当前没有已发布且可发现的模型');
-        el('client-claude-model-list').textContent = claude.error || ((claude.models || []).map(item => item.public_model_name ? `${item.alias}（公共模型：${item.public_model_name}）` : item.alias).join('、') || '当前没有可发现的 Claude Code 模型');
+        renderClientGatewayModelList('client-openai-model-list', openai.models || [], openai.error, '当前没有已发布且可发现的模型');
+        renderClientGatewayModelList('client-claude-model-list', claude.models || [], claude.error, '当前没有可发现的 Claude Code 模型', item => item.public_model_name ? `${item.alias}（公共模型：${item.public_model_name}）` : item.alias);
         el('client-gateway-models-status').textContent = (openai.error || claude.error) ? '部分网关不可用；未显示任何密钥。' : '已从运行中的两个本地网关刷新。';
       } catch (_error) { el('client-gateway-models-status').textContent = '读取失败，请确认本地网关已启动。'; el('client-openai-model-list').textContent = '无法读取'; el('client-claude-model-list').textContent = '无法读取'; }
+    }
+
+    function renderClientGatewayModelList(targetId, models, error, emptyText, format = item => String(item)) {
+      const target = el(targetId);
+      target.replaceChildren();
+      if (error || !models.length) {
+        target.textContent = error || emptyText;
+        return;
+      }
+      models.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'client-gateway-model-row';
+        row.textContent = format(item);
+        target.appendChild(row);
+      });
     }
 
     function hideLiteLlmModelsInfoDialog() {
@@ -7180,6 +7976,34 @@
       el('btn-show-litellm-connection-info').onclick = showLiteLlmModelsInfoDialog;
       el('btn-show-litellm-client-help').onclick = showLiteLlmConnectionHelpDialog;
       el('btn-configure-claude-code').onclick = configureClaudeCodeDiscovery;
+      document.querySelectorAll('[data-client-integration]').forEach(button => {
+        button.onclick = () => button.dataset.clientIntegration === 'codex'
+          ? showCodexSyncPreview()
+          : button.dataset.clientIntegration === 'claude-code'
+            ? showClaudeSyncPreview()
+          : applyClientIntegration(button.dataset.clientIntegration, button);
+      });
+      document.querySelectorAll('[data-client-shortcut-client]').forEach(button => {
+        button.onclick = () => showClientShortcuts(button.dataset.clientShortcutClient);
+      });
+      el('btn-close-client-shortcuts').onclick = () => { el('client-shortcuts-overlay').dataset.open = 'false'; };
+      el('btn-save-client-shortcuts').onclick = saveClientShortcuts;
+      el('btn-close-codex-sync-preview').onclick = () => { el('codex-sync-preview-overlay').dataset.open = 'false'; };
+      el('codex-sync-preview-overlay').onclick = event => {
+        if (event.target === el('codex-sync-preview-overlay')) el('codex-sync-preview-overlay').dataset.open = 'false';
+      };
+      el('btn-validate-codex-candidate').onclick = validateCodexCandidate;
+      el('btn-apply-codex-preview').onclick = applyCodexPreview;
+      el('btn-refresh-codex-backups').onclick = refreshCodexBackups;
+      el('btn-restore-codex-backup').onclick = restoreCodexBackup;
+      el('btn-close-claude-sync-preview').onclick = () => { el('claude-sync-preview-overlay').dataset.open = 'false'; };
+      el('claude-sync-preview-overlay').onclick = event => {
+        if (event.target === el('claude-sync-preview-overlay')) el('claude-sync-preview-overlay').dataset.open = 'false';
+      };
+      el('btn-validate-claude-candidate').onclick = validateClaudeCandidate;
+      el('btn-apply-claude-preview').onclick = applyClaudePreview;
+      el('btn-refresh-claude-backups').onclick = refreshClaudeBackups;
+      el('btn-restore-claude-backup').onclick = restoreClaudeBackup;
       el('btn-copy-litellm-api-url').onclick = () => copyTextToClipboard(currentLiteLlmApiUrl(), 'API URL 已复制');
       el('btn-copy-claude-code-api-url').onclick = () => copyTextToClipboard(currentClaudeCodeApiUrl(), 'Claude Code API URL 已复制');
       el('btn-show-cost-analysis').onclick = event => {
@@ -8062,10 +8886,12 @@
       const renderAvailabilityRow = (rawModel, matches, stale = false) => {
         const activeBinding = matches.find(binding => !binding.mapping_conflict && binding.enabled !== false) || null;
         const selectedRouteId = activeBinding?.model_route_id || '';
+        const activeRoute = routeById(selectedRouteId);
         const family = rawModelFamily(profile, rawModel, matches);
-        const mappedText = activeBinding
-          ? (routeById(activeBinding.model_route_id)?.public_model_name || '未命名公共模型')
+        const mappedText = activeRoute
+          ? (activeRoute.public_model_name || '未命名公共模型')
           : '待映射';
+        const suggestedPublicModelName = String(activeRoute?.public_model_name || rawModel || '').trim();
         const conflictBindings = matches.filter(binding => binding.mapping_conflict);
         const testBinding = activeBinding || matches[0] || null;
         const testConversationButton = `
@@ -8077,8 +8903,10 @@
             <div><span class="model-availability-label">当前公共模型</span><div class="model-availability-value">${escapeHtml(mappedText)}</div></div>
             <div><span class="model-availability-label">API 分组</span><div class="model-availability-value">${escapeHtml(profile.label || profile.id)}</div></div>
             <div class="model-availability-actions">
-              <label class="model-availability-label">模型系列<select data-raw-model-family data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">${rawModelFamilyOptions(family)}</select></label>
-              <label class="model-availability-label">映射到公共模型<select data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">${rawModelRouteOptions(family, rawModel, selectedRouteId)}</select></label>
+              <label class="model-availability-control"><span class="model-availability-label">模型系列</span><select data-raw-model-family data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">${rawModelFamilyOptions(family)}</select></label>
+              <label class="model-availability-control"><span class="model-availability-label">新建模型系列</span><input data-raw-model-family-custom data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}" value="${escapeHtml(family)}" placeholder="输入新系列后按 Enter"></label>
+              <label class="model-availability-control"><span class="model-availability-label">映射到公共模型</span><select data-raw-model-route data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}">${rawModelRouteOptions(family, rawModel, selectedRouteId)}</select></label>
+              <label class="model-availability-control"><span class="model-availability-label">新建公共模型</span><input data-raw-model-route-custom data-raw-model-profile-id="${escapeHtml(profile.id)}" data-raw-model-name="${escapeHtml(rawModel)}" value="${escapeHtml(suggestedPublicModelName)}" placeholder="输入新名称后按 Enter"></label>
               ${testConversationButton}
             </div>
             ${conflictBindings.length ? `<div class="helper-text warn">历史映射冲突：已停用 ${conflictBindings.length} 条重复绑定。选择“映射到公共模型”即可整理为当前选择。</div>` : ''}
@@ -8158,6 +8986,12 @@
       const refsBody = `
         <div class="helper-text">每条原始模型都先选择模型系列，再映射到一个公共模型。未完成映射的模型会单独归入“待映射”。</div>
         ${staleReferences.length ? `<div class="helper-text warn">最近一次同步未在 /models 中发现 ${staleReferences.length} 条历史绑定，已自动停用；确认不再使用后可清理。</div>` : ''}
+        <div class="provider-actions">
+          <label class="model-availability-control"><span class="model-availability-label">批量公共模型后缀</span><input data-api-model-suffix="${escapeHtml(profile.id)}" placeholder="例如 -lingsuan"></label>
+          <button class="secondary" type="button" data-action="apply-api-model-suffix" data-api-profile-id="${escapeHtml(profile.id)}" ${knownModelsCount ? '' : 'disabled'}>批量加入后缀</button>
+          <button class="danger" type="button" data-action="remove-api-model-suffix" data-api-profile-id="${escapeHtml(profile.id)}" ${knownModelsCount ? '' : 'disabled'}>批量移除后缀</button>
+        </div>
+        <div class="helper-text">加入会对当前 API 已同步的 ${knownModelsCount} 个模型创建或复用“原公共模型名 + 后缀”的映射；移除只回退名称以该后缀结尾的当前 API 映射。两者都不会修改其他 API，结果先保存在路由草稿中。</div>
         <div class="availability-search">
           <label for="availability-search-${escapeHtml(profile.id)}">搜索当前 API 的模型</label>
           <input id="availability-search-${escapeHtml(profile.id)}" type="search" data-availability-search="${escapeHtml(profile.id)}" value="${escapeHtml(availabilitySearch)}" placeholder="输入原始模型名、公共模型名或 API 分组的一部分">

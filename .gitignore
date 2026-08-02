@@ -41,6 +41,8 @@ docs/*.log
 docs/*.out
 docs/*.synctex.gz
 *.zip
+/dist/
+/packaging/build/
 
 # Downloaded or extracted temporary assets
 /*.js

@@ -90,6 +90,7 @@ class RoutingDraftGatewaySyncTests(unittest.TestCase):
         configs = save_configs.call_args.args[0]
         self.assertEqual(configs["openai"]["model_list"][0]["litellm_params"]["model"], "gpt-5.1")
         self.assertEqual(configs["claude"]["model_list"][0]["litellm_params"]["model"], "gpt-5.1")
+        self.assertEqual(save_state.call_args_list[-1].kwargs["gateway_runtime_configs"], configs)
         self.assertTrue(result["gateway_reloaded"])
 
     def test_unpublished_route_binding_change_only_saves_draft(self):

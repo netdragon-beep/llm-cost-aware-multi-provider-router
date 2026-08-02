@@ -5,6 +5,10 @@ function Get-ProjectRoot {
 }
 
 function Get-CondaEnvRoot {
+  $configuredRoot = [System.Environment]::GetEnvironmentVariable("RELAYDECK_ENV_ROOT")
+  if (![string]::IsNullOrWhiteSpace($configuredRoot)) {
+    return $configuredRoot
+  }
   return "D:/conda/envs/llm-stack-local"
 }
 

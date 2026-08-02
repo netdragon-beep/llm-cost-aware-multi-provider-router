@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -14,6 +17,13 @@ from starlette.background import BackgroundTask
 
 DEFAULT_INTERNAL_PORT = 4102
 VALID_TIERS = frozenset({"opus", "sonnet", "haiku", "fable"})
+ROOT = Path(__file__).resolve().parent
+CLIENT_SHORTCUTS_PATH = ROOT / "config" / "client-shortcuts.json"
+LEGACY_CLAUDE_SHORTCUT_TIERS = {
+    "claude-haiku": "haiku",
+    "claude-sonnet": "sonnet",
+    "claude-opus": "opus",
+}
 HOP_BY_HOP_HEADERS = frozenset(
     {
         "connection",
@@ -66,6 +76,66 @@ def build_model_discovery_response(
     }
 
 
+def load_claude_shortcuts() -> list[dict[str, str]]:
+    """Load editable Claude Code aliases from local state without failing requests."""
+    try:
+        payload = json.loads(CLIENT_SHORTCUTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    submitted = payload.get("claude_code")
+    if isinstance(submitted, dict):
+        return [
+            {"name": name, "tier": tier, "target": str(submitted.get(name) or "").strip()}
+            for name, tier in LEGACY_CLAUDE_SHORTCUT_TIERS.items()
+        ]
+    if not isinstance(submitted, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in submitted:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        tier = str(item.get("tier") or "").strip().lower()
+        target = str(item.get("target") or "").strip()
+        if name and tier in VALID_TIERS:
+            rows.append({"name": name, "tier": tier, "target": target})
+    return rows
+
+
+def shortcut_target_alias(model: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", model.strip().lower()).strip("-") or "relay"
+    return f"claude-haiku-relaydeck-{slug}"
+
+
+def rewrite_shortcut_model(model: str, slots: Iterable[dict[str, str]]) -> str:
+    """Translate a configured Claude Code alias to its current internal RelayDeck route."""
+    for slot in slots:
+        if slot.get("name") == model and (target := str(slot.get("target") or "").strip()):
+            return shortcut_target_alias(target)
+    return model
+
+
+def build_shortcut_model_discovery_response(slots: Iterable[dict[str, str]]) -> dict[str, Any]:
+    """Expose configured Claude Code aliases without leaking internal LiteLLM aliases."""
+    models = [
+        {
+            "type": "model",
+            "id": slot["name"],
+            "display_name": f"{slot['name']} -> {slot['target']}",
+            "anthropic_family_tier": slot["tier"],
+        }
+        for slot in slots
+        if slot.get("target")
+    ]
+    return {
+        "data": models,
+        "has_more": False,
+        "first_id": None,
+        "last_id": None,
+    }
+
+
 def internal_base_url() -> str:
     port = int(os.environ.get("CLAUDE_LITELLM_INTERNAL_PORT", str(DEFAULT_INTERNAL_PORT)))
     return f"http://127.0.0.1:{port}"
@@ -85,19 +155,34 @@ async def close_upstream(response: httpx.Response, client: httpx.AsyncClient) ->
 
 
 async def request_upstream(request: Request, *, stream: bool) -> tuple[httpx.Response, httpx.AsyncClient]:
+    body = await request.body()
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+    if content_type == "application/json" and request.method in {"POST", "PUT", "PATCH"}:
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("model"), str):
+            payload["model"] = rewrite_shortcut_model(payload["model"], load_claude_shortcuts())
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
     client = httpx.AsyncClient(timeout=None, follow_redirects=False)
     upstream_request = client.build_request(
         request.method,
         f"{internal_base_url()}{request.url.path}",
         params=list(request.query_params.multi_items()),
         headers=filtered_headers(request.headers.items()),
-        content=await request.body(),
+        content=body,
     )
     return await client.send(upstream_request, stream=stream), client
 
 
 @app.get("/v1/models")
 async def desktop_model_discovery(request: Request) -> Response:
+    shortcuts = load_claude_shortcuts()
+    if shortcuts:
+        return JSONResponse(build_shortcut_model_discovery_response(shortcuts))
+
     upstream, client = await request_upstream(request, stream=False)
     try:
         if upstream.status_code >= 400:

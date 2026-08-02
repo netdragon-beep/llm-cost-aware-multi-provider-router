@@ -1,5 +1,15 @@
 # RelayDeck Local
 
+[下载最新版](https://github.com/netdragon-beep/llm-cost-aware-multi-provider-router/releases/latest)
+
+| 平台 | 下载发行包 | 适用设备 |
+| --- | --- | --- |
+| Windows | [RelayDeck-Setup-x64.exe](https://github.com/netdragon-beep/llm-cost-aware-multi-provider-router/releases/latest/download/RelayDeck-Setup-x64.exe) | Windows 10/11 x64 |
+| macOS Apple Silicon | [RelayDeck-arm64.dmg](https://github.com/netdragon-beep/llm-cost-aware-multi-provider-router/releases/latest/download/RelayDeck-arm64.dmg) | M1/M2/M3/M4 及后续 Apple Silicon |
+| macOS Intel | [RelayDeck-x64.dmg](https://github.com/netdragon-beep/llm-cost-aware-multi-provider-router/releases/latest/download/RelayDeck-x64.dmg) | Intel Mac |
+
+请同时下载 Release 中的 `SHA256SUMS.txt` 并校验下载包；不要下载 GitHub 自动生成的源码压缩包作为安装包。
+
 一个面向 Windows 与 macOS 本地环境的多供应商 LLM 网关与管理台。RelayDeck 将
 LiteLLM、Open WebUI 和供应商管理集中到同一套工作流中：客户端只需要连接
 一个稳定地址，系统负责按模型、优先级、健康状态、额度和成本选择上游，并在
@@ -237,6 +247,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-llm-stack.ps1
 
    脚本使用 `run/*.pid` 管理 LiteLLM、Claude Code 网关、Open WebUI 和管理页，日志写入
    `logs/`。启动成功后访问 `http://127.0.0.1:8091`。
+
+### macOS 发行包首次使用
+
+1. 从上方下载与芯片架构匹配的 `.dmg`，先按 Release 中的 `SHA256SUMS.txt` 校验，再将 `RelayDeck.app` 拖到 `Applications`。没有管理员权限时可放到用户自己的 `~/Applications`。
+2. 首次打开时 macOS Gatekeeper 可能提示无法验证开发者。确认下载来源和校验值后，在 Finder 中按住 Control 点按应用并选择“打开”，或到“系统设置 -> 隐私与安全性”选择“仍要打开”。不要为未知来源的应用关闭 Gatekeeper。若隔离属性仍阻止已校验的发行包，可执行：
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/RelayDeck.app
+   ```
+
+3. RelayDeck 的供应商登录凭据保存在当前用户的 macOS Keychain。系统出现 Keychain 访问或保存权限提示时，确认请求来自 RelayDeck；拒绝后需要在管理台重新发起登录或授权。
+4. 浏览器登录和网页额度适配器需要单独安装 Playwright Chromium 运行时。首次需要这些功能时，在终端执行：
+
+   ```sh
+   /Applications/RelayDeck.app/Contents/MacOS/RelayDeck --install-browser-runtime
+   ```
+
+   只使用 API Key 或不使用浏览器 SSO 时无需安装该运行时。
 
 ## 客户端接入
 

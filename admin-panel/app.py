@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ import threading
 import subprocess
 import tempfile
 import time
+import tomllib
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -77,6 +79,7 @@ DEFAULT_PROVIDER_BASES = {
     "anthropic": "https://api.anthropic.com",
 }
 ENV_VAR_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+PUBLIC_MODEL_NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]+$")
 KNOWN_PORTAL_HOST_ADAPTERS = {
     "lingsuan.top": "lingsuan-web",
     "auto-code.net": "autocode-web",
@@ -312,24 +315,54 @@ def configure_claude_code_settings(
     base_url: str,
     auth_token: str,
 ) -> dict[str, str]:
-    """Merge RelayDeck discovery settings without replacing user preferences."""
+    """Apply a generated Claude Code candidate without exposing credentials in preview."""
+    previous = settings_path.read_text(encoding="utf-8") if settings_path.exists() else ""
+    candidate = build_claude_code_settings_content(previous, base_url)
+    return apply_claude_code_settings_candidate(settings_path, candidate, base_url, auth_token)
+
+
+def _parse_claude_code_settings(content: str) -> dict[str, Any]:
     settings: dict[str, Any] = {}
-    if settings_path.exists():
+    if content.strip():
         try:
-            loaded = json.loads(settings_path.read_text(encoding="utf-8"))
+            loaded = json.loads(content)
         except json.JSONDecodeError as exc:
             raise ValueError("Claude Code settings.json is not valid JSON") from exc
         if not isinstance(loaded, dict):
             raise ValueError("Claude Code settings.json must contain a JSON object")
         settings = loaded
-
     current_env = settings.get("env")
     if current_env is None:
         current_env = {}
     if not isinstance(current_env, dict):
         raise ValueError("Claude Code settings env must be a JSON object")
+    settings["env"] = current_env
+    return settings
 
-    backup_path = backup_file(settings_path)
+
+def build_claude_code_settings_content(previous: str, base_url: str) -> str:
+    """Create a JSON preview with the auth token redacted."""
+    settings = _parse_claude_code_settings(previous)
+    current_env = settings["env"]
+    current_env.update(
+        {
+            "ANTHROPIC_BASE_URL": base_url.rstrip("/"),
+            "ANTHROPIC_AUTH_TOKEN": "<managed by RelayDeck when applied>",
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+        }
+    )
+    return json.dumps(settings, ensure_ascii=False, indent=2) + "\n"
+
+
+def apply_claude_code_settings_candidate(
+    settings_path: Path,
+    candidate: str,
+    base_url: str,
+    auth_token: str,
+) -> dict[str, str]:
+    """Validate, back up, and atomically apply a reviewed Claude Code candidate."""
+    settings = _parse_claude_code_settings(candidate)
+    current_env = settings["env"]
     current_env.update(
         {
             "ANTHROPIC_BASE_URL": base_url.rstrip("/"),
@@ -337,16 +370,284 @@ def configure_claude_code_settings(
             "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
         }
     )
-    settings["env"] = current_env
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
-        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    rendered = json.dumps(settings, ensure_ascii=False, indent=2) + "\n"
+    previous = settings_path.read_bytes() if settings_path.exists() else None
+    backup_path = backup_file(settings_path)
+    try:
+        _write_text_atomically(settings_path, rendered)
+        _parse_claude_code_settings(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        _restore_gateway_config(settings_path, previous)
+        raise
     return {
         "settings_path": str(settings_path),
         "backup_path": str(backup_path) if backup_path else "",
     }
+
+
+def list_claude_code_settings_backups(settings_path: Path) -> list[dict[str, Any]]:
+    backups: list[dict[str, Any]] = []
+    for path in sorted(settings_path.parent.glob(f"{settings_path.name}.bak-*"), key=lambda item: item.stat().st_mtime, reverse=True):
+        if path.is_file():
+            stat = path.stat()
+            backups.append({"name": path.name, "modified_at": int(stat.st_mtime), "size": stat.st_size})
+    return backups
+
+
+def restore_claude_code_settings_backup(settings_path: Path, backup_name: str) -> dict[str, str]:
+    expected_prefix = f"{settings_path.name}.bak-"
+    if (
+        not backup_name.startswith(expected_prefix)
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", backup_name)
+        or Path(backup_name).name != backup_name
+    ):
+        raise ValueError("Invalid Claude Code backup name")
+    backup_path = settings_path.parent / backup_name
+    if not backup_path.is_file():
+        raise ValueError("Claude Code backup was not found")
+    candidate = backup_path.read_text(encoding="utf-8")
+    _parse_claude_code_settings(candidate)
+    current_backup = backup_file(settings_path)
+    _write_text_atomically(settings_path, candidate)
+    return {"settings_path": str(settings_path), "backup_path": str(current_backup) if current_backup else ""}
+
+
+def client_integration_paths(home: Path | None = None) -> dict[str, Path]:
+    root = home or Path.home()
+    return {
+        "codex_config": root / ".codex" / "config.toml",
+        "codex_catalog": root / ".codex" / "relaydeck-model-catalog.json",
+        "opencode_config": root / ".config" / "opencode" / "opencode.jsonc",
+        "claude_config": RUNTIME_PATHS.claude_code_settings_path(root),
+    }
+
+
+def _model_supports_image(route: dict[str, Any], model_name: str) -> bool:
+    modalities = ensure_mapping(route.get("modalities"))
+    input_modalities = ensure_list(route.get("input_modalities")) or ensure_list(modalities.get("input"))
+    if input_modalities:
+        return "image" in {str(item).lower() for item in input_modalities}
+    if route.get("supports_image") is not None:
+        return bool(route.get("supports_image"))
+    name = model_name.lower()
+    return any(token in name for token in ("gpt", "claude", "gemini", "vision", "qwen-vl", "qwen2-vl"))
+
+
+def published_client_models(management_state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the public model names that are currently enabled and published."""
+    models: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for route in ensure_list(management_state.get("model_routes")):
+        if not isinstance(route, dict) or not bool(route.get("gateway_enabled")) or not bool(route.get("enabled", True)):
+            continue
+        model_name = str(route.get("public_model_name") or route.get("model_name") or "").strip()
+        if not model_name or model_name in seen:
+            continue
+        seen.add(model_name)
+        models.append(
+            {
+                "id": model_name,
+                "display_name": str(route.get("display_name") or model_name).strip() or model_name,
+                "supports_image": _model_supports_image(route, model_name),
+            }
+        )
+    return models
+
+
+def _write_text_atomically(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        os.replace(temporary, path)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _replace_toml_assignment(content: str, key: str, value: str) -> str:
+    pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=\s*.*$")
+    line = f"{key} = {value}"
+    return pattern.sub(line, content, count=1) if pattern.search(content) else f"{line}\n{content}"
+
+
+def build_codex_config_content(previous: str, catalog_path: Path, models: list[dict[str, Any]], base_url: str) -> str:
+    """Build a TOML candidate without writing user configuration."""
+    if not models:
+        raise ValueError("No published RelayDeck models are available for Codex")
+    default_model = models[0]["id"]
+    content = _replace_toml_assignment(previous, "model_provider", _toml_string("relaydeck"))
+    content = _replace_toml_assignment(content, "model", _toml_string(default_model))
+    content = _replace_toml_assignment(content, "review_model", _toml_string(default_model))
+    provider_block = "\n".join(
+        [
+            "[model_providers.relaydeck]",
+            f"name = {_toml_string('RelayDeck Local')}",
+            f"base_url = {_toml_string(base_url.rstrip('/'))}",
+            f"wire_api = {_toml_string('responses')}",
+            f"env_key = {_toml_string('LITELLM_MASTER_KEY')}",
+            f"model_catalog_json = {_toml_string(catalog_path.as_posix())}",
+            "",
+        ]
+    )
+    pattern = re.compile(r"(?ms)^\[model_providers\.relaydeck\]\n.*?(?=^\[|\Z)")
+    return (pattern.sub(provider_block, content) if pattern.search(content) else content.rstrip() + "\n\n" + provider_block).rstrip() + "\n"
+
+
+def configure_codex_client(config_path: Path, catalog_path: Path, models: list[dict[str, Any]], base_url: str) -> dict[str, Any]:
+    if not models:
+        raise ValueError("No published RelayDeck models are available for Codex")
+    previous = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    candidate = build_codex_config_content(previous, catalog_path, models, base_url)
+    return apply_codex_config_candidate(config_path, catalog_path, candidate, models)
+
+
+def _codex_catalog_payload(models: list[dict[str, Any]]) -> str:
+    return json.dumps(
+        {"models": [
+            {
+                "slug": item["id"],
+                "display_name": item["display_name"],
+                "input_modalities": ["text", "image"] if item["supports_image"] else ["text"],
+                "supported_in_api": True,
+            }
+            for item in models
+        ]},
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+
+
+def apply_codex_config_candidate(config_path: Path, catalog_path: Path, candidate: str, models: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate and atomically apply a reviewed Codex TOML candidate."""
+    if not models:
+        raise ValueError("No published RelayDeck models are available for Codex")
+    try:
+        tomllib.loads(candidate)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Codex config.toml is not valid TOML: {exc}") from exc
+
+    previous_config = config_path.read_bytes() if config_path.exists() else None
+    previous_catalog = catalog_path.read_bytes() if catalog_path.exists() else None
+    backup_path = backup_file(config_path)
+    catalog_backup = backup_file(catalog_path)
+    try:
+        _write_text_atomically(catalog_path, _codex_catalog_payload(models))
+        _write_text_atomically(config_path, candidate)
+        tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        _restore_gateway_config(config_path, previous_config)
+        _restore_gateway_config(catalog_path, previous_catalog)
+        raise
+    return {
+        "config_path": str(config_path),
+        "catalog_path": str(catalog_path),
+        "backup_path": str(backup_path) if backup_path else "",
+        "catalog_backup_path": str(catalog_backup) if catalog_backup else "",
+        "model_count": len(models),
+    }
+
+
+def list_codex_config_backups(config_path: Path) -> list[dict[str, Any]]:
+    backups: list[dict[str, Any]] = []
+    for path in sorted(config_path.parent.glob(f"{config_path.name}.bak-*"), key=lambda item: item.stat().st_mtime, reverse=True):
+        if path.is_file():
+            stat = path.stat()
+            backups.append({"name": path.name, "modified_at": int(stat.st_mtime), "size": stat.st_size})
+    return backups
+
+
+def restore_codex_config_backup(config_path: Path, backup_name: str) -> dict[str, Any]:
+    expected_prefix = f"{config_path.name}.bak-"
+    if (
+        not backup_name.startswith(expected_prefix)
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", backup_name)
+        or Path(backup_name).name != backup_name
+    ):
+        raise ValueError("Invalid Codex backup name")
+    backup_path = config_path.parent / backup_name
+    if not backup_path.is_file():
+        raise ValueError("Codex backup was not found")
+    candidate = backup_path.read_text(encoding="utf-8")
+    try:
+        tomllib.loads(candidate)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Selected backup is not valid TOML: {exc}") from exc
+    current_backup = backup_file(config_path)
+    _write_text_atomically(config_path, candidate)
+    return {"config_path": str(config_path), "backup_path": str(current_backup) if current_backup else ""}
+
+
+def _parse_jsonc(content: str) -> dict[str, Any]:
+    stripped: list[str] = []
+    in_string = False
+    escaped = False
+    cursor = 0
+    while cursor < len(content):
+        char = content[cursor]
+        following = content[cursor + 1] if cursor + 1 < len(content) else ""
+        if in_string:
+            stripped.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            cursor += 1
+            continue
+        if char == '"':
+            in_string = True
+            stripped.append(char)
+        elif char == "/" and following == "/":
+            cursor = content.find("\n", cursor)
+            if cursor < 0:
+                break
+            stripped.append("\n")
+        elif char == "/" and following == "*":
+            end = content.find("*/", cursor + 2)
+            cursor = len(content) if end < 0 else end + 1
+        else:
+            stripped.append(char)
+        cursor += 1
+    normalized = re.sub(r",\s*([}\]])", r"\1", "".join(stripped))
+    parsed = json.loads(normalized or "{}")
+    if not isinstance(parsed, dict):
+        raise ValueError("OpenCode opencode.jsonc must contain a JSON object")
+    return parsed
+
+
+def configure_opencode_client(config_path: Path, models: list[dict[str, Any]], base_url: str, api_key: str) -> dict[str, Any]:
+    if not models:
+        raise ValueError("No published RelayDeck models are available for OpenCode")
+    settings = _parse_jsonc(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    providers = settings.get("provider") or {}
+    if not isinstance(providers, dict):
+        raise ValueError("OpenCode provider must be a JSON object")
+    backup_path = backup_file(config_path)
+    providers["relaydeck"] = {
+        "name": "RelayDeck Local",
+        "npm": "@ai-sdk/openai-compatible",
+        "api": base_url.rstrip("/"),
+        "options": {"baseURL": base_url.rstrip("/"), "apiKey": api_key, "timeout": 600000, "chunkTimeout": 120000},
+        "models": {
+            item["id"]: {
+                "name": item["display_name"],
+                "tool_call": True,
+                "modalities": {"input": ["text", "image"] if item["supports_image"] else ["text"], "output": ["text"]},
+            }
+            for item in models
+        },
+    }
+    settings["provider"] = providers
+    _write_text_atomically(config_path, json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+    return {"config_path": str(config_path), "backup_path": str(backup_path) if backup_path else "", "model_count": len(models)}
 
 
 def read_env_var_name(api_key_value: str | None) -> str:
@@ -3718,6 +4019,46 @@ def normalize_api_profiles(rows: list[dict[str, Any]], suppliers: list[dict[str,
     return items
 
 
+def repair_utf8_mojibake(value: Any) -> str:
+    """Recover UTF-8 text that was previously decoded as Latin-1."""
+    text = str(value or "")
+    try:
+        repaired = text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+    return repaired if repaired != text else text
+
+
+STATE_SECRET_FIELD_NAMES = {"api_key", "api_key_value", "api_key_env", "token", "password", "secret"}
+
+
+def repair_utf8_mojibake_in_state(value: Any, *, field_name: str = "") -> tuple[Any, bool]:
+    """Repair persisted display and model text without changing credential fields."""
+    if isinstance(value, dict):
+        changed = False
+        repaired: dict[str, Any] = {}
+        for key, item in value.items():
+            if str(key).lower() in STATE_SECRET_FIELD_NAMES:
+                repaired[key] = item
+                continue
+            repaired_item, item_changed = repair_utf8_mojibake_in_state(item, field_name=str(key))
+            repaired[key] = repaired_item
+            changed = changed or item_changed
+        return repaired, changed
+    if isinstance(value, list):
+        changed = False
+        repaired_items: list[Any] = []
+        for item in value:
+            repaired_item, item_changed = repair_utf8_mojibake_in_state(item, field_name=field_name)
+            repaired_items.append(repaired_item)
+            changed = changed or item_changed
+        return repaired_items, changed
+    if isinstance(value, str) and field_name.lower() not in STATE_SECRET_FIELD_NAMES:
+        repaired = repair_utf8_mojibake(value)
+        return repaired, repaired != value
+    return value, False
+
+
 DEFAULT_MODEL_FAMILIES = [
     "GPT 系列",
     "Claude 系列",
@@ -3735,7 +4076,7 @@ def normalize_model_families(rows: list[Any] | None) -> list[str]:
     items: list[str] = []
     seen: set[str] = set()
     for raw in rows or []:
-        name = str(raw or "").strip()
+        name = repair_utf8_mojibake(raw).strip()
         if not name or name in seen:
             continue
         seen.add(name)
@@ -3768,12 +4109,37 @@ def guess_model_family(model_name: str) -> str:
     return ""
 
 
-def normalize_model_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def validate_public_model_name(value: Any) -> str:
+    name = str(value or "").strip()
+    if not name:
+        raise ValueError("公共模型名称不能为空")
+    if not PUBLIC_MODEL_NAME_RE.fullmatch(name):
+        raise ValueError("公共模型名称不能包含控制字符")
+    return name
+
+
+def normalize_model_routes(
+    rows: list[dict[str, Any]],
+    *,
+    allow_legacy_invalid_names: bool = False,
+    allowed_legacy_names: set[tuple[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, row in enumerate(rows):
-        public_model_name = str(row.get("public_model_name") or row.get("model_name") or row.get("display_name") or f"model-{index + 1}").strip()
-        route_id = str(row.get("id") or make_stable_id("route", public_model_name)).strip()
+        raw_public_model_name = row.get("public_model_name") or row.get("model_name") or row.get("display_name") or f"model-{index + 1}"
+        route_id = str(row.get("id") or make_stable_id("route", raw_public_model_name)).strip()
+        try:
+            public_model_name = validate_public_model_name(raw_public_model_name)
+            legacy_invalid_public_model_name = False
+        except ValueError:
+            legacy_name = str(raw_public_model_name or "").strip()
+            if not allow_legacy_invalid_names or (
+                allowed_legacy_names is not None and (route_id, legacy_name) not in allowed_legacy_names
+            ):
+                raise
+            public_model_name = legacy_name
+            legacy_invalid_public_model_name = True
         if route_id in seen:
             route_id = make_stable_id("route", route_id, index)
         seen.add(route_id)
@@ -3786,8 +4152,9 @@ def normalize_model_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 **row,
                 "id": route_id,
                 "public_model_name": public_model_name,
+                "legacy_invalid_public_model_name": legacy_invalid_public_model_name,
                 "display_name": str(row.get("display_name") or public_model_name).strip(),
-                "model_family": str(row.get("model_family") or row.get("category") or guess_model_family(public_model_name)).strip(),
+                "model_family": repair_utf8_mojibake(row.get("model_family") or row.get("category") or guess_model_family(public_model_name)).strip(),
                 "routing_strategy": str(row.get("routing_strategy") or "simple-shuffle").strip(),
                 "enabled": bool(row.get("enabled", True)),
                 # Only explicitly published public models are exposed by the gateway.
@@ -3795,6 +4162,24 @@ def normalize_model_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return items
+
+
+def persisted_legacy_public_model_names() -> set[tuple[str, str]]:
+    if not STATE_PATH.exists():
+        return set()
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return set()
+    legacy_names: set[tuple[str, str]] = set()
+    for row in ensure_list(state.get("model_routes")):
+        if not isinstance(row, dict):
+            continue
+        route_id = str(row.get("id") or "").strip()
+        name = str(row.get("public_model_name") or row.get("model_name") or row.get("display_name") or "").strip()
+        if route_id and name and not PUBLIC_MODEL_NAME_RE.fullmatch(name):
+            legacy_names.add((route_id, name))
+    return legacy_names
 
 
 def migrate_gateway_publish_flags(model_routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4025,7 +4410,8 @@ def load_management_state() -> dict[str, Any]:
     if STATE_PATH.exists():
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         state, quota_state_changed = migrate_legacy_supplier_quota_state(state)
-        if quota_state_changed:
+        state, text_encoding_changed = repair_utf8_mojibake_in_state(state)
+        if quota_state_changed or text_encoding_changed:
             migration_path = STATE_PATH.with_suffix(STATE_PATH.suffix + ".migrating")
             migration_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(migration_path, STATE_PATH)
@@ -4035,13 +4421,30 @@ def load_management_state() -> dict[str, Any]:
                 [item for item in ensure_list(state.get("api_profiles")) if isinstance(item, dict)],
                 suppliers,
             )
-            model_routes = normalize_model_routes([item for item in ensure_list(state.get("model_routes")) if isinstance(item, dict)])
+            persisted_model_routes = [item for item in ensure_list(state.get("model_routes")) if isinstance(item, dict)]
+            persisted_model_families = ensure_list(state.get("model_families"))
+            model_routes = normalize_model_routes(
+                persisted_model_routes,
+                allow_legacy_invalid_names=True,
+            )
             model_routes = migrate_gateway_publish_flags(model_routes)
             route_bindings = normalize_route_bindings(
                 [item for item in ensure_list(state.get("route_bindings")) if isinstance(item, dict)],
                 api_profiles,
                 model_routes,
             )
+            normalized_persisted_families = normalize_model_families(persisted_model_families)
+            family_encoding_changed = (
+                [str(item.get("model_family") or "") for item in persisted_model_routes]
+                != [str(item.get("model_family") or "") for item in model_routes]
+                or [str(item or "") for item in persisted_model_families] != normalized_persisted_families
+            )
+            if family_encoding_changed:
+                state["model_routes"] = model_routes
+                state["model_families"] = normalized_persisted_families
+                migration_path = STATE_PATH.with_suffix(STATE_PATH.suffix + ".migrating")
+                migration_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+                os.replace(migration_path, STATE_PATH)
             return {
                 "routing_view_mode": str(state.get("routing_view_mode") or "by_model"),
                 "suppliers": suppliers,
@@ -4055,7 +4458,7 @@ def load_management_state() -> dict[str, Any]:
                 "route_bindings": route_bindings,
                 "model_families": normalize_model_families([
                     *DEFAULT_MODEL_FAMILIES,
-                    *ensure_list(state.get("model_families")),
+                    *normalized_persisted_families,
                     *[item.get("model_family", "") for item in model_routes],
                 ]),
                 "router_settings": state.get("router_settings", {}) or {},
@@ -4963,6 +5366,254 @@ def api_configure_claude_code() -> dict[str, Any]:
     return {"ok": True, **result, "restart_required": True}
 
 
+def client_integration_status() -> dict[str, Any]:
+    models = published_client_models(load_management_state())
+    paths = client_integration_paths()
+
+    def configured(path: Path, marker: str) -> bool:
+        if not path.exists():
+            return False
+        try:
+            return marker in path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+    return {
+        "models": models,
+        "clients": {
+            "codex": {"configured": configured(paths["codex_config"], "[model_providers.relaydeck]"), "config_path": str(paths["codex_config"]), "model_count": len(models)},
+            "opencode": {"configured": configured(paths["opencode_config"], '"relaydeck"'), "config_path": str(paths["opencode_config"]), "model_count": len(models)},
+            "claude_code": {"configured": configured(paths["claude_config"], "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"), "config_path": str(paths["claude_config"]), "model_count": len(models)},
+        },
+    }
+
+
+CLIENT_SHORTCUTS_PATH = ROOT / "config" / "client-shortcuts.json"
+CODEX_SHORTCUT_SLOTS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini")
+CLAUDE_SHORTCUT_TIERS = ("haiku", "sonnet", "opus", "fable")
+DEFAULT_CLAUDE_SHORTCUTS = tuple(
+    {"name": f"claude-{tier}", "tier": tier, "target": ""}
+    for tier in CLAUDE_SHORTCUT_TIERS
+)
+
+
+def normalize_client_shortcuts(raw: Any) -> dict[str, Any]:
+    """Normalize legacy fixed Claude slots into editable Claude alias rows."""
+    source = ensure_mapping(raw)
+    codex_source = ensure_mapping(source.get("codex"))
+    codex = {slot: str(codex_source.get(slot) or "") for slot in CODEX_SHORTCUT_SLOTS}
+    claude_source = source.get("claude_code")
+    if isinstance(claude_source, dict):
+        claude_rows = [
+            {"name": name, "tier": name.removeprefix("claude-").split("-", 1)[0], "target": str(target or "")}
+            for name, target in claude_source.items()
+            if str(name).strip()
+        ]
+    elif isinstance(claude_source, list):
+        claude_rows = [
+            {
+                "name": str(ensure_mapping(row).get("name") or "").strip(),
+                "tier": str(ensure_mapping(row).get("tier") or "sonnet").strip().lower(),
+                "target": str(ensure_mapping(row).get("target") or "").strip(),
+            }
+            for row in claude_source
+            if str(ensure_mapping(row).get("name") or "").strip()
+        ]
+    else:
+        claude_rows = [dict(row) for row in DEFAULT_CLAUDE_SHORTCUTS]
+    return {"codex": codex, "claude_code": claude_rows}
+
+
+def load_client_shortcuts() -> dict[str, Any]:
+    try:
+        raw = json.loads(CLIENT_SHORTCUTS_PATH.read_text(encoding="utf-8")) if CLIENT_SHORTCUTS_PATH.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+    return normalize_client_shortcuts(raw)
+
+
+@app.get("/api/client-shortcuts")
+def api_client_shortcuts() -> dict[str, Any]:
+    return {"ok": True, "slots": load_client_shortcuts(), "models": published_client_models(load_management_state())}
+
+
+@app.put("/api/client-shortcuts")
+def api_save_client_shortcuts(payload: dict[str, Any]) -> dict[str, Any]:
+    submitted = ensure_mapping(payload.get("slots"))
+    allowed = {item["id"] for item in published_client_models(load_management_state())}
+    normalized = normalize_client_shortcuts(submitted)
+    claude_rows = normalized["claude_code"]
+    names = [row["name"] for row in claude_rows]
+    if len(names) != len(set(names)):
+        raise HTTPException(status_code=400, detail="Claude Code model names must be unique")
+    if any(row["tier"] not in CLAUDE_SHORTCUT_TIERS for row in claude_rows):
+        raise HTTPException(status_code=400, detail="Claude Code model tier must be haiku, sonnet, or opus")
+    targets = list(normalized["codex"].values()) + [row["target"] for row in claude_rows]
+    invalid = [target for target in targets if target and target not in allowed]
+    if invalid:
+        raise HTTPException(status_code=400, detail="Shortcut targets must be published RelayDeck models")
+    _write_text_atomically(CLIENT_SHORTCUTS_PATH, json.dumps(normalized, ensure_ascii=False, indent=2) + "\n")
+    return {"ok": True, "slots": normalized}
+
+
+@app.get("/api/client-integrations")
+def api_client_integrations() -> dict[str, Any]:
+    return {"ok": True, **client_integration_status()}
+
+
+@app.post("/api/client-integrations/{client_name}/apply")
+def api_apply_client_integration(client_name: str) -> dict[str, Any]:
+    env_map = parse_env_file()
+    gateway_key = str(env_map.get("LITELLM_MASTER_KEY") or "").strip()
+    if not gateway_key:
+        raise HTTPException(status_code=400, detail="Missing LITELLM_MASTER_KEY")
+    models = published_client_models(load_management_state())
+    litellm_port, _, _ = get_ports(env_map)
+    base_url = f"http://127.0.0.1:{litellm_port}/v1"
+    paths = client_integration_paths()
+    try:
+        if client_name == "codex":
+            raise HTTPException(status_code=409, detail="Codex sync requires preview and confirmation")
+        elif client_name == "opencode":
+            result = configure_opencode_client(paths["opencode_config"], models, base_url, gateway_key)
+        elif client_name == "claude-code":
+            raise HTTPException(status_code=409, detail="Claude Code sync requires preview and confirmation")
+        else:
+            raise HTTPException(status_code=404, detail="Unsupported client integration")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "client": client_name, "restart_required": True, **result}
+
+
+@app.get("/api/client-integrations/codex/preview")
+def api_codex_preview() -> dict[str, Any]:
+    env_map = parse_env_file()
+    models = published_client_models(load_management_state())
+    litellm_port, _, _ = get_ports(env_map)
+    paths = client_integration_paths()
+    current = paths["codex_config"].read_text(encoding="utf-8") if paths["codex_config"].exists() else ""
+    candidate = build_codex_config_content(current, paths["codex_catalog"], models, f"http://127.0.0.1:{litellm_port}/v1")
+    tomllib.loads(candidate)
+    diff = "".join(
+        difflib.unified_diff(
+            current.splitlines(True),
+            candidate.splitlines(True),
+            fromfile="current config.toml",
+            tofile="RelayDeck candidate",
+        )
+    )
+    return {"ok": True, "current": current, "candidate": candidate, "diff": diff}
+
+
+@app.post("/api/client-integrations/codex/apply-preview")
+def api_apply_codex_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    candidate = str(payload.get("candidate") or "")
+    models = published_client_models(load_management_state())
+    paths = client_integration_paths()
+    try:
+        result = apply_codex_config_candidate(paths["codex_config"], paths["codex_catalog"], candidate, models)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "client": "codex", "restart_required": True, **result}
+
+
+@app.post("/api/client-integrations/codex/validate-preview")
+def api_validate_codex_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    candidate = str(payload.get("candidate") or "")
+    try:
+        tomllib.loads(candidate)
+    except tomllib.TOMLDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Codex config.toml is not valid TOML: {exc}") from exc
+    return {"ok": True}
+
+
+@app.get("/api/client-integrations/codex/backups")
+def api_list_codex_backups() -> dict[str, Any]:
+    return {"ok": True, "backups": list_codex_config_backups(client_integration_paths()["codex_config"])}
+
+
+@app.post("/api/client-integrations/codex/backups/{backup_name}/restore")
+def api_restore_codex_backup(backup_name: str) -> dict[str, Any]:
+    try:
+        result = restore_codex_config_backup(client_integration_paths()["codex_config"], backup_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
+@app.get("/api/client-integrations/claude-code/preview")
+def api_claude_code_preview() -> dict[str, Any]:
+    env_map = parse_env_file()
+    claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
+    settings_path = client_integration_paths()["claude_config"]
+    current = settings_path.read_text(encoding="utf-8") if settings_path.exists() else ""
+    candidate = build_claude_code_settings_content(current, f"http://127.0.0.1:{claude_port}")
+    diff = "".join(
+        difflib.unified_diff(
+            _redact_claude_code_settings_for_preview(current).splitlines(True),
+            candidate.splitlines(True),
+            fromfile="current settings.json",
+            tofile="RelayDeck candidate",
+        )
+    )
+    return {"ok": True, "current": _redact_claude_code_settings_for_preview(current), "candidate": candidate, "diff": diff}
+
+
+def _redact_claude_code_settings_for_preview(content: str) -> str:
+    if not content.strip():
+        return ""
+    try:
+        settings = _parse_claude_code_settings(content)
+    except ValueError:
+        return content
+    env = settings.get("env")
+    if isinstance(env, dict) and "ANTHROPIC_AUTH_TOKEN" in env:
+        env["ANTHROPIC_AUTH_TOKEN"] = "<redacted>"
+    return json.dumps(settings, ensure_ascii=False, indent=2) + "\n"
+
+
+@app.post("/api/client-integrations/claude-code/validate-preview")
+def api_validate_claude_code_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        _parse_claude_code_settings(str(payload.get("candidate") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/client-integrations/claude-code/apply-preview")
+def api_apply_claude_code_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    env_map = parse_env_file()
+    gateway_key = str(env_map.get("LITELLM_MASTER_KEY") or "").strip()
+    if not gateway_key:
+        raise HTTPException(status_code=400, detail="Missing LITELLM_MASTER_KEY")
+    claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
+    try:
+        result = apply_claude_code_settings_candidate(
+            client_integration_paths()["claude_config"],
+            str(payload.get("candidate") or ""),
+            f"http://127.0.0.1:{claude_port}",
+            gateway_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "client": "claude-code", "restart_required": True, **result}
+
+
+@app.get("/api/client-integrations/claude-code/backups")
+def api_list_claude_code_backups() -> dict[str, Any]:
+    return {"ok": True, "backups": list_claude_code_settings_backups(client_integration_paths()["claude_config"])}
+
+
+@app.post("/api/client-integrations/claude-code/backups/{backup_name}/restore")
+def api_restore_claude_code_backup(backup_name: str) -> dict[str, Any]:
+    try:
+        result = restore_claude_code_settings_backup(client_integration_paths()["claude_config"], backup_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
 @app.get("/api/quota-adapters")
 def api_quota_adapters() -> dict[str, Any]:
     return {
@@ -5335,7 +5986,11 @@ def api_save(payload: ConfigPayload) -> dict[str, Any]:
     if has_management_state:
         suppliers = normalize_suppliers([item.model_dump() for item in payload.suppliers])
         api_profiles = normalize_api_profiles([item.model_dump() for item in payload.api_profiles], suppliers)
-        model_routes = normalize_model_routes([item.model_dump() for item in payload.model_routes])
+        model_routes = normalize_model_routes(
+            [item.model_dump() for item in payload.model_routes],
+            allow_legacy_invalid_names=True,
+            allowed_legacy_names=persisted_legacy_public_model_names(),
+        )
         route_bindings = normalize_route_bindings([item.model_dump() for item in payload.route_bindings], api_profiles, model_routes)
         configs = build_litellm_gateway_configs_from_management_state(
             suppliers,
@@ -5394,7 +6049,11 @@ def api_save_routing_draft(payload: RoutingDraftPayload) -> dict[str, Any]:
         previous_state = load_management_state()
         suppliers = normalize_suppliers([item.model_dump() for item in payload.suppliers])
         api_profiles = normalize_api_profiles([item.model_dump() for item in payload.api_profiles], suppliers)
-        model_routes = normalize_model_routes([item.model_dump() for item in payload.model_routes])
+        model_routes = normalize_model_routes(
+            [item.model_dump() for item in payload.model_routes],
+            allow_legacy_invalid_names=True,
+            allowed_legacy_names=persisted_legacy_public_model_names(),
+        )
         route_bindings = normalize_route_bindings([item.model_dump() for item in payload.route_bindings], api_profiles, model_routes)
         stored_runtime_configs = previous_state.get("gateway_runtime_configs")
         if isinstance(stored_runtime_configs, dict) and {"openai", "claude"}.issubset(stored_runtime_configs):
@@ -5464,6 +6123,7 @@ def api_save_routing_draft(payload: RoutingDraftPayload) -> dict[str, Any]:
                         payload.litellm_settings,
                         payload.routing_view_mode,
                         payload.supplier_quotas,
+                        gateway_runtime_configs=next_gateway_configs,
                     )
         return {
             "ok": True,

@@ -1,0 +1,108 @@
+name: Build and publish RelayDeck packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=manual-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create tag release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --notes-file packaging/release-notes.md
+
+  test-packaging-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m unittest tests/test_release_packaging.py -v
+
+  build-windows:
+    needs: [prepare-release, test-packaging-contract]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress --yes
+      - name: Build Windows x64 installer
+        shell: pwsh
+        run: ./packaging/build_windows.ps1 -OutputDir dist -Version "${{ needs.prepare-release.outputs.tag }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RelayDeck-Setup-x64.exe
+          path: dist/RelayDeck-Setup-x64.exe
+          if-no-files-found: error
+
+  build-macos:
+    needs: [prepare-release, test-packaging-contract]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            asset: RelayDeck-x64.dmg
+          - runner: macos-14
+            asset: RelayDeck-arm64.dmg
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build native macOS disk image
+        run: sh packaging/build_macos.sh --output-dir dist --version "${{ needs.prepare-release.outputs.tag }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish-release-assets:
+    if: github.event_name != 'workflow_dispatch'
+    needs: [prepare-release, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Add checksums and release notes
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum RelayDeck-Setup-x64.exe RelayDeck-x64.dmg RelayDeck-arm64.dmg > SHA256SUMS.txt
+          cp ../packaging/release-notes.md RELEASE_NOTES.md
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.prepare-release.outputs.tag }}" release-assets/RelayDeck-Setup-x64.exe release-assets/RelayDeck-x64.dmg release-assets/RelayDeck-arm64.dmg release-assets/SHA256SUMS.txt release-assets/RELEASE_NOTES.md --clobber
