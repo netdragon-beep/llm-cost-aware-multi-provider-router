@@ -46,6 +46,14 @@ def configured_tier() -> str:
     return tier if tier in VALID_TIERS else "haiku"
 
 
+def infer_shortcut_tier(name: str) -> str:
+    normalized = name.strip().lower()
+    for tier in ("haiku", "sonnet", "opus", "fable"):
+        if tier in normalized:
+            return tier
+    return "sonnet"
+
+
 def build_model_discovery_response(
     models: Iterable[dict[str, Any]],
     *,
@@ -86,8 +94,8 @@ def load_claude_shortcuts() -> list[dict[str, str]]:
     submitted = payload.get("claude_code")
     if isinstance(submitted, dict):
         return [
-            {"name": name, "tier": tier, "target": str(submitted.get(name) or "").strip()}
-            for name, tier in LEGACY_CLAUDE_SHORTCUT_TIERS.items()
+            {"name": name, "tier": infer_shortcut_tier(name), "target": str(submitted.get(name) or "").strip()}
+            for name in LEGACY_CLAUDE_SHORTCUT_TIERS
         ]
     if not isinstance(submitted, list):
         return []
@@ -96,9 +104,9 @@ def load_claude_shortcuts() -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
-        tier = str(item.get("tier") or "").strip().lower()
+        tier = infer_shortcut_tier(name)
         target = str(item.get("target") or "").strip()
-        if name and tier in VALID_TIERS:
+        if name:
             rows.append({"name": name, "tier": tier, "target": target})
     return rows
 
@@ -109,10 +117,25 @@ def shortcut_target_alias(model: str) -> str:
 
 
 def rewrite_shortcut_model(model: str, slots: Iterable[dict[str, str]]) -> str:
-    """Translate a configured Claude Code alias to its current internal RelayDeck route."""
-    for slot in slots:
-        if slot.get("name") == model and (target := str(slot.get("target") or "").strip()):
+    """Translate an exact alias, or an unambiguous Claude family, to a RelayDeck route."""
+    normalized_model = model.strip().casefold()
+    configured_slots = list(slots)
+    for slot in configured_slots:
+        name = str(slot.get("name") or "").strip()
+        if name.casefold() == normalized_model and (target := str(slot.get("target") or "").strip()):
             return shortcut_target_alias(target)
+
+    # Claude Code's built-in picker submits canonical ids such as ``claude-opus-5``.
+    # A user-facing alias such as ``Opus`` should still work when its family has one target.
+    requested_tier = infer_shortcut_tier(model)
+    family_targets = {
+        str(slot.get("target") or "").strip()
+        for slot in configured_slots
+        if str(slot.get("target") or "").strip()
+        and infer_shortcut_tier(str(slot.get("name") or "")) == requested_tier
+    }
+    if len(family_targets) == 1:
+        return shortcut_target_alias(family_targets.pop())
     return model
 
 

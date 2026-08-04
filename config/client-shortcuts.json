@@ -1,0 +1,32 @@
+{
+  "codex": {
+    "gpt-5.6-sol": "claude-fable-5-pojia",
+    "gpt-5.6-terra": "gpt-5.6-terra",
+    "gpt-5.6-luna": "",
+    "gpt-5.5": "",
+    "gpt-5.4": "",
+    "gpt-5.4-mini": ""
+  },
+  "claude_code": [
+    {
+      "name": "Haiku",
+      "tier": "haiku",
+      "target": "gpt-5.6-terra"
+    },
+    {
+      "name": "Opus",
+      "tier": "opus",
+      "target": "claude-fable-5-pojia"
+    },
+    {
+      "name": "claude-Haiku-4.5",
+      "tier": "haiku",
+      "target": "gpt-5.6-terra"
+    },
+    {
+      "name": "claude-opus-5",
+      "tier": "opus",
+      "target": "claude-fable-5-pojia"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "relaydeck-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RelayDeck desktop shell",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "test": "node --test",
+    "package:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "32.2.0",
+    "electron-builder": "25.1.8"
+  }
+}

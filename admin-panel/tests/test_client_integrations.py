@@ -11,6 +11,39 @@ import app  # noqa: E402
 
 
 class ClientIntegrationTests(unittest.TestCase):
+    def test_appearance_theme_controls_are_fixed_and_local_only(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="appearance-theme-options"', source)
+        self.assertIn("const APPEARANCE_THEME_STORAGE_KEY = 'relaydeck.appearance-theme';", source)
+        self.assertIn("const APPEARANCE_THEMES =", source)
+        self.assertIn("function renderAppearanceThemeOptions()", source)
+        self.assertIn("function applyAppearanceTheme(themeId, persist = true)", source)
+        self.assertIn("window.localStorage.setItem(APPEARANCE_THEME_STORAGE_KEY, theme.id);", source)
+        self.assertIn("document.body.dataset.appearanceTheme = theme.id;", source)
+        self.assertIn("type=\"button\"", source)
+        self.assertIn("aria-pressed", source)
+        self.assertIn("button.dataset.appearanceThemeId = theme.id;", source)
+        for theme_id in ("morning", "mist", "deep-space", "ink", "forest", "amber"):
+            self.assertIn(f"id: '{theme_id}'", source)
+        self.assertIn("\u6668\u767d", source)
+        self.assertIn("\u96fe\u7070", source)
+        self.assertIn("\u6df1\u7a7a", source)
+        self.assertIn("\u58a8\u9ed1", source)
+        self.assertIn("\u68ee\u7eff", source)
+        self.assertIn("\u7425\u73c0", source)
+
+    def test_appearance_themes_keep_semantic_alert_colors_and_avoid_gateway_save_flow(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertEqual(source.count("--warn: #ffcb6b;"), 1)
+        self.assertEqual(source.count("--danger: #ff7a7a;"), 1)
+        appearance_start = source.index("const APPEARANCE_THEME_STORAGE_KEY")
+        appearance_end = source.index("function readAutoRefreshBalancesPreference", appearance_start)
+        appearance_code = source[appearance_start:appearance_end]
+        self.assertNotIn("saveRoutingDraft", appearance_code)
+        self.assertNotIn("/api/", appearance_code)
+
     def test_gateway_model_lists_render_each_model_as_a_row(self):
         source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
 
@@ -48,7 +81,129 @@ class ClientIntegrationTests(unittest.TestCase):
         self.assertIn('data-claude-shortcut-row', source)
         self.assertIn('新增模型映射', source)
         self.assertIn('data-claude-shortcut-name', source)
-        self.assertIn("'fable'", source)
+        self.assertNotIn("data-claude-shortcut-tier", source)
+        self.assertIn("会自动识别类型", source)
+
+    def test_routing_relationship_panel_is_between_tools_and_routing_list(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+
+        tools_index = source.index('id="model-route-tools"')
+        panel_index = source.index('id="routing-relationship-panel"')
+        list_index = source.index('id="provider-list"')
+        self.assertLess(tools_index, panel_index)
+        self.assertLess(panel_index, list_index)
+        self.assertIn('class="routing-relationship-panel"', source)
+        self.assertIn('aria-live="polite"', source)
+
+    def test_routing_relationship_panel_has_selection_and_renderer_contracts(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        renderer_start = source.index("function renderRoutingRelationshipPanel()")
+        renderer = source[renderer_start:source.index("function statusLabelText", renderer_start)]
+
+        self.assertIn("relationshipSelection: { mode: 'model', routeId: '', apiProfileId: '' }", source)
+        self.assertIn("function ensureRoutingRelationshipSelection()", source)
+        self.assertIn("function renderRoutingRelationshipPanel()", source)
+        self.assertIn("renderRoutingRelationshipPanel();", source)
+        self.assertIn("bindingsForRoute(route.id)", renderer)
+        self.assertIn("supplierDisplayName(supplier)", renderer)
+        self.assertIn("profile.label || profile.id", renderer)
+        self.assertIn("binding.upstream_model", renderer)
+        self.assertIn("binding.priority", renderer)
+        self.assertIn("bindingNetworkStatus", renderer)
+        self.assertIn("relationshipQuotaHint(supplier)", renderer)
+        self.assertIn("bindingsForApiProfile(profile.id)", renderer)
+        self.assertIn("route.public_model_name", renderer)
+        self.assertIn("route.gateway_enabled", renderer)
+        self.assertIn("这个 API 还没有关联公共模型", renderer)
+        self.assertIn("这个公共模型还没有上游绑定", renderer)
+
+    def test_supplier_relationship_panel_only_shows_published_routes(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        renderer_start = source.index("function renderRoutingRelationshipPanel()")
+        renderer = source[renderer_start:source.index("function statusLabelText", renderer_start)]
+
+        self.assertRegex(
+            renderer,
+            r"const publishedBindings = bindings\.filter\(binding => \{\s*const route = routeById\(binding\.model_route_id\) \|\| \{\};\s*return route\.gateway_enabled && route\.enabled !== false;\s*\}\);",
+        )
+        self.assertIn("这个 API 还没有关联公共模型", renderer)
+        self.assertIn("这个 API 的所有公共模型关联均未发布或已停用，请发布或启用路由后再试", renderer)
+
+    def test_routing_relationship_panel_focus_action_is_wired(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        action_start = source.index("if (action === 'focus-relationship-target')")
+        focus_action = source[action_start:source.index("if (action === 'activate-pricing-version'", action_start)]
+        focus_restore_start = source.index("function restorePendingRelationshipFocus()")
+        focus_restore = source[focus_restore_start:source.index("function saveRoutingDraft", focus_restore_start)]
+        render_start = source.index("function renderRouting()")
+        render_routing = source[render_start:source.index("function renderEnv()", render_start)]
+        media_start = source.index("@media (max-width: 1120px)")
+        media_block = source[media_start:source.index("</style>", media_start)]
+
+        self.assertIn('data-action="focus-relationship-target"', source)
+        self.assertIn("button.dataset.relationshipMode", focus_action)
+        self.assertIn("state.routingViewMode = 'by_model'", focus_action)
+        self.assertIn("state.routingViewMode = 'by_supplier'", focus_action)
+        self.assertIn("data-route-group-id", focus_restore)
+        self.assertIn("data-api-card-id", focus_restore)
+        self.assertIn("scrollIntoView({ behavior: 'smooth', block: 'center' })", focus_restore)
+        self.assertEqual(focus_action.count("renderRouting();"), 2)
+        self.assertNotRegex(
+            focus_action,
+            r"(?:state\.(?:modelRoutes|routeBindings|apiProfiles|suppliers)(?:\s*(?:\[[^\]]*\]|\.\w+))*\s*(?:=(?!=)|[+\-*/%]=|\+\+|--)|state\.(?:modelRoutes|routeBindings|apiProfiles|suppliers)\s*\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|copyWithin|fill)\s*\(|(?:Object\.assign|Reflect\.set)\(\s*state\.(?:modelRoutes|routeBindings|apiProfiles|suppliers))",
+        )
+        self.assertLess(render_routing.index("renderRoutingRelationshipPanel();"), render_routing.index("bindRoutingInputs();"))
+        self.assertRegex(
+            media_block,
+            r"\.relationship-panel-head\s*,\s*\.relationship-row\s*\{[^}]*flex-direction:\s*column\s*;",
+        )
+
+    def test_relationship_panel_focus_actions_rebind_after_panel_refresh(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        renderer_start = source.index("function renderRoutingRelationshipPanel()")
+        renderer = source[renderer_start:source.index("function statusLabelText", renderer_start)]
+        binder_start = source.index("function bindRoutingRelationshipPanelActions()")
+        binder = source[binder_start:source.index("function bindRoutingInputs()", binder_start)]
+        routing_binder_start = source.index("function bindRoutingInputs()")
+        routing_binder = source[routing_binder_start:source.index("function envRowTemplate", routing_binder_start)]
+
+        self.assertIn("function bindRoutingRelationshipPanelActions()", source)
+        self.assertIn('panel.querySelectorAll(\'[data-action="focus-relationship-target"]\')', binder)
+        self.assertIn("button.addEventListener('click', handleRoutingAction);", binder)
+        self.assertGreaterEqual(renderer.count("bindRoutingRelationshipPanelActions();"), 2)
+        self.assertIn("if (button.closest('#routing-relationship-panel')) return;", routing_binder)
+
+    def test_relationship_focus_target_restores_open_card_after_layout_snapshot(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        focus_start = source.index("function restorePendingRelationshipFocus()")
+        focus_restore = source[focus_start:source.index("function saveRoutingDraft", focus_start)]
+        action_start = source.index("if (action === 'focus-relationship-target')")
+        focus_action = source[action_start:source.index("if (action === 'activate-pricing-version'", action_start)]
+        render_start = source.index("function renderRouting()")
+        render_routing = source[render_start:source.index("function renderEnv()", render_start)]
+
+        self.assertIn("pendingRelationshipFocus: null", source)
+        self.assertIn("state.pendingRelationshipFocus = { mode: 'model', targetId: routeId };", focus_action)
+        self.assertIn(
+            "state.pendingRelationshipFocus = { mode: 'supplier', targetId: apiProfileId };",
+            focus_action,
+        )
+        self.assertIn("card.open = true;", focus_restore)
+        self.assertIn("platformCard.open = true;", focus_restore)
+        self.assertIn("const familyCard = card.closest('.fold-card');", focus_restore)
+        self.assertIn("if (familyCard) familyCard.open = true;", focus_restore)
+        self.assertIn("card.scrollIntoView({ behavior: 'smooth', block: 'center' });", focus_restore)
+        self.assertLess(render_routing.index("restoreRoutingLayout();"), render_routing.index("restorePendingRelationshipFocus();"))
+
+    def test_relationship_focus_target_is_consumed_when_filtered_out(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        focus_start = source.index("function restorePendingRelationshipFocus()")
+        focus_restore = source[focus_start:source.index("function saveRoutingDraft", focus_start)]
+
+        self.assertIn(
+            "if (!card) {\n        state.pendingRelationshipFocus = null;\n        return;\n      }",
+            focus_restore,
+        )
 
     def test_published_models_excludes_unpublished_and_marks_visual_models(self):
         models = app.published_client_models(
@@ -85,6 +240,20 @@ class ClientIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(shortcuts["claude_code"][0]["tier"], "fable")
+
+    def test_claude_alias_tier_is_inferred_from_name_not_submitted_type(self):
+        shortcuts = app.normalize_client_shortcuts(
+            {"claude_code": [{"name": "claude-opus-5", "tier": "sonnet", "target": "gpt-5.6-terra"}]}
+        )
+
+        self.assertEqual(shortcuts["claude_code"][0]["tier"], "opus")
+        self.assertEqual(app.infer_claude_shortcut_tier("custom-relay"), "sonnet")
+
+    def test_claude_mapping_ui_hides_client_type_selector(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertNotIn("data-claude-shortcut-tier", source)
+        self.assertIn("会自动识别类型", source)
 
     def test_codex_configuration_preserves_other_providers_and_writes_catalog(self):
         with TemporaryDirectory() as directory:

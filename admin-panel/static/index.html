@@ -16,9 +16,62 @@
       --muted: #9ca9a2;
       --accent: #7dffb6;
       --accent-2: #54d1ff;
+      --surface: rgba(255, 255, 255, 0.04);
+      --surface-strong: #2a3030;
+      --overlay: rgba(8, 10, 10, 0.62);
+      --control-color-scheme: dark;
+      --select-option-bg: #f4f7f5;
+      --select-option-text: #18201d;
+      --select-selected-bg: #4b5252;
+      --select-selected-text: #ffffff;
+      --secondary-bg: rgba(84, 209, 255, 0.12);
+      --secondary-text: #d8f8ff;
+      --secondary-line: rgba(84, 209, 255, 0.24);
       --warn: #ffcb6b;
       --danger: #ff7a7a;
       --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    body[data-appearance-theme="morning"] {
+      --bg: #f5f6f2; --panel: #ffffff; --panel-2: #e9eee8; --line: #c7d2ca; --text: #17211d; --muted: #607067;
+      --accent: #187a50; --accent-2: #176f9e; --surface: #f1f5f0; --surface-strong: #ffffff; --overlay: rgba(21, 33, 28, 0.32);
+      --control-color-scheme: light; --select-option-bg: #ffffff; --select-option-text: #17211d; --select-selected-bg: #d9efe3; --select-selected-text: #17211d;
+      --secondary-bg: #e1f0f6; --secondary-text: #155775; --secondary-line: #a9cfdf; --shadow: 0 16px 42px rgba(28, 50, 39, 0.14);
+    }
+
+    body[data-appearance-theme="mist"] {
+      --bg: #e7eaed; --panel: #f8f9fa; --panel-2: #e2e6e9; --line: #c5cbd1; --text: #20272d; --muted: #68747e;
+      --accent: #216f75; --accent-2: #346c9d; --surface: #edf0f2; --surface-strong: #ffffff; --overlay: rgba(31, 38, 45, 0.34);
+      --control-color-scheme: light; --select-option-bg: #ffffff; --select-option-text: #20272d; --select-selected-bg: #d5e7e6; --select-selected-text: #20272d;
+      --secondary-bg: #e2ebf4; --secondary-text: #315b83; --secondary-line: #b4c9dc; --shadow: 0 16px 42px rgba(32, 43, 53, 0.15);
+    }
+
+    body[data-appearance-theme="deep-space"] {
+      --bg: #111313; --panel: #171b1b; --panel-2: #1d2323; --line: rgba(168, 196, 186, 0.18); --text: #edf4ef; --muted: #9ca9a2;
+      --accent: #7dffb6; --accent-2: #54d1ff; --surface: rgba(255, 255, 255, 0.04); --surface-strong: #2a3030; --overlay: rgba(8, 10, 10, 0.62);
+      --control-color-scheme: dark; --select-option-bg: #f4f7f5; --select-option-text: #18201d; --select-selected-bg: #4b5252; --select-selected-text: #ffffff;
+      --secondary-bg: rgba(84, 209, 255, 0.12); --secondary-text: #d8f8ff; --secondary-line: rgba(84, 209, 255, 0.24); --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    body[data-appearance-theme="ink"] {
+      --bg: #090909; --panel: #121212; --panel-2: #1b1b1b; --line: #363636; --text: #f3f3f3; --muted: #a7a7a7;
+      --accent: #e1e1e1; --accent-2: #9fc5d8; --surface: #1a1a1a; --surface-strong: #232323; --overlay: rgba(0, 0, 0, 0.72);
+      --control-color-scheme: dark; --select-option-bg: #eeeeee; --select-option-text: #171717; --select-selected-bg: #4a4a4a; --select-selected-text: #ffffff;
+      --secondary-bg: #202a2f; --secondary-text: #cbe9f8; --secondary-line: #405b68; --shadow: 0 20px 60px rgba(0, 0, 0, 0.52);
+    }
+
+    body[data-appearance-theme="forest"] {
+      --bg: #102018; --panel: #172b20; --panel-2: #203a2a; --line: #41624b; --text: #e9f5e8; --muted: #a2baa6;
+      --accent: #9bdf78; --accent-2: #79c6b0; --surface: #213b2b; --surface-strong: #2a4935; --overlay: rgba(5, 18, 10, 0.66);
+      --control-color-scheme: dark; --select-option-bg: #edf5ed; --select-option-text: #183220; --select-selected-bg: #41654a; --select-selected-text: #ffffff;
+      --secondary-bg: #1d4541; --secondary-text: #b9efe1; --secondary-line: #438276; --shadow: 0 20px 60px rgba(0, 0, 0, 0.38);
+    }
+
+    body[data-appearance-theme="amber"] {
+      --bg: #251b12; --panel: #342719; --panel-2: #47351f; --line: #765a36; --text: #fff1d7; --muted: #d1b98f;
+      --accent: #ffd06a; --accent-2: #8bc1d7; --surface: #493620; --surface-strong: #5b4426; --overlay: rgba(25, 17, 8, 0.68);
+      --control-color-scheme: dark; --select-option-bg: #fff6e4; --select-option-text: #38250f; --select-selected-bg: #77572b; --select-selected-text: #ffffff;
+      --secondary-bg: #384a46; --secondary-text: #c6edf3; --secondary-line: #648c88; --shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
     }
 
     * { box-sizing: border-box; }
@@ -32,10 +85,7 @@
       min-height: 100vh;
       color: var(--text);
       font-family: "IBM Plex Mono", monospace;
-      background:
-        radial-gradient(circle at top left, rgba(84, 209, 255, 0.08), transparent 28%),
-        radial-gradient(circle at bottom right, rgba(125, 255, 182, 0.08), transparent 26%),
-        linear-gradient(180deg, #0f1212, #111313 42%, #0f1111);
+      background: var(--bg);
     }
 
     .shell {
@@ -47,7 +97,7 @@
     }
 
     .card {
-      background: linear-gradient(180deg, rgba(30, 36, 36, 0.94), rgba(19, 23, 23, 0.96));
+      background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 22px;
       box-shadow: var(--shadow);
@@ -92,8 +142,8 @@
 
     .status-chip,
     .mini-panel {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--surface);
+      border: 1px solid var(--line);
       border-radius: 16px;
       padding: 14px;
     }
@@ -172,7 +222,7 @@
     .overlay {
       position: fixed;
       inset: 0;
-      background: rgba(8, 10, 10, 0.62);
+      background: var(--overlay);
       backdrop-filter: blur(6px);
       display: none;
       align-items: center;
@@ -234,7 +284,7 @@
 
     .dialog {
       width: min(720px, calc(100vw - 40px));
-      background: linear-gradient(180deg, rgba(30, 36, 36, 0.98), rgba(19, 23, 23, 0.98));
+      background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 20px;
       box-shadow: var(--shadow);
@@ -255,6 +305,60 @@
       font-size: 22px;
     }
 
+    .appearance-theme-section {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+
+    .appearance-theme-section h4 {
+      margin: 0 0 6px;
+      font-size: 15px;
+    }
+
+    .appearance-theme-options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .appearance-theme-option {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      text-align: left;
+    }
+
+    .appearance-theme-option[aria-pressed="true"] {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    .appearance-theme-swatch {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 18px;
+      border: 1px solid rgba(255, 255, 255, 0.42);
+      border-radius: 50%;
+    }
+
+    .appearance-theme-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
     .dialog-title-row {
       display: flex;
       align-items: center;
@@ -262,8 +366,8 @@
     }
 
     .dialog-close {
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--line);
+      background: var(--surface);
       color: var(--text);
       border-radius: 10px;
       padding: 8px 10px;
@@ -688,9 +792,9 @@
     }
 
     .secondary {
-      background: rgba(84, 209, 255, 0.12);
-      color: #d8f8ff;
-      border: 1px solid rgba(84, 209, 255, 0.24);
+      background: var(--secondary-bg);
+      color: var(--secondary-text);
+      border: 1px solid var(--secondary-line);
     }
 
     .danger {
@@ -1201,6 +1305,58 @@
       flex: 1 1 280px;
     }
 
+    .routing-relationship-panel {
+      margin-top: 14px;
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border: 1px solid rgba(113, 201, 181, 0.28);
+      border-radius: 8px;
+      background: rgba(113, 201, 181, 0.06);
+    }
+
+    .relationship-panel-head,
+    .relationship-row,
+    .relationship-row-main,
+    .relationship-row-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .relationship-panel-head,
+    .relationship-row {
+      justify-content: space-between;
+    }
+
+    .relationship-panel-head {
+      margin-bottom: 10px;
+    }
+
+    .relationship-panel-head strong {
+      font-size: 15px;
+    }
+
+    .relationship-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .relationship-row {
+      padding-top: 7px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .relationship-row-main,
+    .relationship-row-meta {
+      flex-wrap: wrap;
+    }
+
+    .relationship-row-meta {
+      justify-content: flex-end;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     .binding-list-head {
       display: flex;
       justify-content: space-between;
@@ -1490,8 +1646,8 @@
     textarea,
     pre {
       width: 100%;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--surface);
+      border: 1px solid var(--line);
       color: var(--text);
       border-radius: 12px;
       padding: 12px 14px;
@@ -1499,15 +1655,15 @@
     }
 
     select {
-      color-scheme: dark;
-      background-color: #2a3030;
-      color: #edf4ef;
+      color-scheme: var(--control-color-scheme);
+      background-color: var(--surface-strong);
+      color: var(--text);
     }
 
     select option,
     select optgroup {
-      background-color: #f4f7f5;
-      color: #18201d;
+      background-color: var(--select-option-bg);
+      color: var(--select-option-text);
     }
 
     select optgroup {
@@ -1517,8 +1673,8 @@
     select option:checked,
     select option:hover,
     select option:focus {
-      background-color: #4b5252;
-      color: #ffffff;
+      background-color: var(--select-selected-bg);
+      color: var(--select-selected-text);
     }
 
     textarea {
@@ -1739,6 +1895,22 @@
       .hero h2 {
         font-size: 40px;
       }
+
+      .relationship-panel-head,
+      .relationship-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .relationship-row-meta {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .appearance-theme-options {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
   </style>
 </head>
@@ -1916,6 +2088,7 @@
             <div id="model-family-chip-list" class="family-chip-list"></div>
           </div>
         </div>
+        <section class="routing-relationship-panel" id="routing-relationship-panel" aria-live="polite"></section>
         <div id="provider-list" class="routing-list"></div>
       </section>
 
@@ -2106,6 +2279,11 @@
         </div>
         <button class="dialog-close" id="btn-close-system-settings" type="button">关闭</button>
       </div>
+      <section class="appearance-theme-section" aria-labelledby="appearance-theme-title">
+        <h4 id="appearance-theme-title">外观</h4>
+        <div class="helper-text">选择管理台外观。此设置仅保存在当前浏览器，不会写入网关配置。</div>
+        <div class="appearance-theme-options" id="appearance-theme-options" aria-label="外观主题"></div>
+      </section>
       <div id="env-list" class="env-list"></div>
     </div>
   </div>
@@ -2256,6 +2434,8 @@
       router_settings: {},
       litellm_settings: {},
       routingViewMode: 'by_model',
+      relationshipSelection: { mode: 'model', routeId: '', apiProfileId: '' },
+      pendingRelationshipFocus: null,
       selectedBindingId: '',
       ports: {},
       lastServiceStatus: {},
@@ -2313,6 +2493,62 @@
 
     function el(id) {
       return document.getElementById(id);
+    }
+
+    const APPEARANCE_THEME_STORAGE_KEY = 'relaydeck.appearance-theme';
+    const APPEARANCE_THEMES = [
+      { id: 'morning', name: '晨白', swatch: '#f5f6f2' },
+      { id: 'mist', name: '雾灰', swatch: '#e7eaed' },
+      { id: 'deep-space', name: '深空', swatch: '#1d4d68' },
+      { id: 'ink', name: '墨黑', swatch: '#121212' },
+      { id: 'forest', name: '森绿', swatch: '#2f6b43' },
+      { id: 'amber', name: '琥珀', swatch: '#c78625' },
+    ];
+
+    function readAppearanceThemePreference() {
+      try {
+        const savedThemeId = window.localStorage.getItem(APPEARANCE_THEME_STORAGE_KEY);
+        return APPEARANCE_THEMES.some(theme => theme.id === savedThemeId) ? savedThemeId : 'deep-space';
+      } catch {
+        return 'deep-space';
+      }
+    }
+
+    function renderAppearanceThemeOptions() {
+      const target = el('appearance-theme-options');
+      if (!target) return;
+      const activeThemeId = document.body.dataset.appearanceTheme || 'deep-space';
+      target.replaceChildren(...APPEARANCE_THEMES.map(theme => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'appearance-theme-option';
+        button.dataset.appearanceThemeId = theme.id;
+        button.setAttribute('aria-pressed', String(theme.id === activeThemeId));
+
+        const swatch = document.createElement('span');
+        swatch.className = 'appearance-theme-swatch';
+        swatch.style.backgroundColor = theme.swatch;
+        swatch.setAttribute('aria-hidden', 'true');
+
+        const name = document.createElement('span');
+        name.className = 'appearance-theme-name';
+        name.textContent = theme.name;
+        button.append(swatch, name);
+        button.addEventListener('click', () => applyAppearanceTheme(theme.id));
+        return button;
+      }));
+    }
+
+    function applyAppearanceTheme(themeId, persist = true) {
+      const theme = APPEARANCE_THEMES.find(item => item.id === themeId)
+        || APPEARANCE_THEMES.find(item => item.id === 'deep-space');
+      document.body.dataset.appearanceTheme = theme.id;
+      if (persist) {
+        try {
+          window.localStorage.setItem(APPEARANCE_THEME_STORAGE_KEY, theme.id);
+        } catch {}
+      }
+      renderAppearanceThemeOptions();
     }
 
     function readAutoRefreshBalancesPreference() {
@@ -2909,6 +3145,102 @@
       return state.bindingDialogStatuses[bindingId] || { status: 'unknown', reason: '未检查', known_ids: [] };
     }
 
+    function ensureRoutingRelationshipSelection() {
+      const selection = state.relationshipSelection || { mode: 'model', routeId: '', apiProfileId: '' };
+      const selectedRoute = routeById(selection.routeId);
+      const selectedProfile = apiProfileById(selection.apiProfileId);
+      if (selection.mode === 'model' && selectedRoute) return selection;
+      if (selection.mode === 'supplier' && selectedProfile) return selection;
+
+      const selectedBinding = bindingById(state.selectedBindingId);
+      if (selectedBinding && routeById(selectedBinding.model_route_id)) {
+        state.relationshipSelection = { mode: 'model', routeId: selectedBinding.model_route_id, apiProfileId: selectedBinding.api_profile_id || '' };
+      } else if (state.modelRoutes[0]) {
+        state.relationshipSelection = { mode: 'model', routeId: state.modelRoutes[0].id, apiProfileId: '' };
+      } else if (state.apiProfiles[0]) {
+        state.relationshipSelection = { mode: 'supplier', routeId: '', apiProfileId: state.apiProfiles[0].id };
+      } else {
+        state.relationshipSelection = { mode: 'model', routeId: '', apiProfileId: '' };
+      }
+      return state.relationshipSelection;
+    }
+
+    function relationshipQuotaHint(supplier) {
+      const usage = usageProviderBySupplierId(supplier?.id || '');
+      if (!usage) return '额度待刷新';
+      if (usage.quota_message) return usage.quota_message;
+      if (usage.balance_remaining != null) return `余量 ${formatMaybe(usage.balance_remaining, 2)} ${usage.currency || ''}`;
+      return usage.balance_checked_at ? `额度刷新 ${usage.balance_checked_at}` : '额度待刷新';
+    }
+
+    function renderRoutingRelationshipPanel() {
+      const panel = el('routing-relationship-panel');
+      if (!panel) return;
+      const selection = ensureRoutingRelationshipSelection();
+      if (selection.mode === 'supplier') {
+        const profile = apiProfileById(selection.apiProfileId);
+        const supplier = supplierById(profile?.supplier_id || '') || {};
+        if (!profile) {
+          panel.innerHTML = '<div class="empty-state">还没有可查看的供应商 API 关系。先新增供应商和 API，再关联公共模型。</div>';
+          return;
+        }
+        const bindings = bindingsForApiProfile(profile.id);
+        const publishedBindings = bindings.filter(binding => {
+          const route = routeById(binding.model_route_id) || {};
+          return route.gateway_enabled && route.enabled !== false;
+        });
+        panel.innerHTML = `
+          <div class="relationship-panel-head">
+            <div><strong>${escapeHtml(supplierDisplayName(supplier))} / ${escapeHtml(profile.label || profile.id || '未命名 API')}</strong><div class="helper-text">这个上游 API 当前关联的公共模型</div></div>
+            <span class="pill muted">${escapeHtml(relationshipQuotaHint(supplier))}</span>
+          </div>
+          <div class="relationship-list">
+            ${bindings.length === 0
+              ? '<div class="empty-state">这个 API 还没有关联公共模型。可在模型视图添加上游，或从已同步原始模型创建映射。</div>'
+              : publishedBindings.length ? publishedBindings.map(binding => {
+              const route = routeById(binding.model_route_id) || {};
+              return `<div class="relationship-row"><div class="relationship-row-main"><strong>${escapeHtml(route.public_model_name || '已删除公共模型')}</strong><span class="pill muted">优先级 ${escapeHtml(String(binding.priority ?? 100))}</span><span class="pill ${route.gateway_enabled && route.enabled !== false ? 'ok' : 'muted'}">${route.gateway_enabled && route.enabled !== false ? '已发布' : (route.enabled === false ? '已停用' : '未发布')}</span></div><div class="relationship-row-meta"><button class="secondary" type="button" data-action="focus-relationship-target" data-relationship-mode="model" data-route-id="${escapeHtml(route.id || binding.model_route_id || '')}">定位模型</button></div></div>`;
+              }).join('')
+              : '<div class="empty-state">这个 API 的所有公共模型关联均未发布或已停用，请发布或启用路由后再试。</div>'}
+          </div>
+        `;
+        bindRoutingRelationshipPanelActions();
+        return;
+      }
+
+      const route = routeById(selection.routeId);
+      if (!route) {
+        panel.innerHTML = '<div class="empty-state">还没有公共模型路由。新增公共模型后，这里会列出每条供应商上游关系。</div>';
+        return;
+      }
+      const bindings = bindingsForRoute(route.id);
+      panel.innerHTML = `
+        <div class="relationship-panel-head">
+          <div><strong>${escapeHtml(route.public_model_name || route.display_name || '未命名公共模型')}</strong><div class="helper-text">公共模型的供应商上游链路</div></div>
+          <span class="pill ${route.gateway_enabled && route.enabled !== false ? 'ok' : 'muted'}">${route.gateway_enabled && route.enabled !== false ? '已发布' : (route.enabled === false ? '已停用' : '未发布')}</span>
+        </div>
+        <div class="relationship-list">
+          ${bindings.length ? bindings.map(binding => {
+            const profile = apiProfileById(binding.api_profile_id) || {};
+            const supplier = supplierById(profile.supplier_id) || {};
+            const network = bindingNetworkStatus(binding.id, profile.id);
+            const dialog = bindingDialogStatus(binding.id);
+            const health = dialog.status !== 'unknown' ? dialog : network;
+            return `<div class="relationship-row"><div class="relationship-row-main"><strong>${escapeHtml(supplierDisplayName(supplier))} / ${escapeHtml(profile.label || profile.id || '未命名 API')}</strong><span class="pill muted">${escapeHtml(binding.upstream_model || '未设置原始模型')}</span></div><div class="relationship-row-meta"><span>优先级 ${escapeHtml(String(binding.priority ?? 100))}</span><span>健康 ${escapeHtml(statusLabelText(health.status))}</span><span>${escapeHtml(relationshipQuotaHint(supplier))}</span><button class="secondary" type="button" data-action="focus-relationship-target" data-relationship-mode="supplier" data-api-profile-id="${escapeHtml(profile.id || binding.api_profile_id || '')}">定位 API</button></div></div>`;
+          }).join('') : '<div class="empty-state">这个公共模型还没有上游绑定。添加供应商 API 后，可在模型卡片中添加原始模型链路。</div>'}
+        </div>
+      `;
+      bindRoutingRelationshipPanelActions();
+    }
+
+    function bindRoutingRelationshipPanelActions() {
+      const panel = el('routing-relationship-panel');
+      if (!panel) return;
+      panel.querySelectorAll('[data-action="focus-relationship-target"]').forEach(button => {
+        button.addEventListener('click', handleRoutingAction);
+      });
+    }
+
     function statusLabelText(status) {
       return status === 'green'
         ? '可用'
@@ -3045,6 +3377,34 @@
       }
       requestAnimationFrame(() => {
         window.scrollTo(0, state.routingScrollY || 0);
+      });
+    }
+
+    function restorePendingRelationshipFocus() {
+      const pending = state.pendingRelationshipFocus;
+      if (!pending) return;
+      const selector = pending.mode === 'model'
+        ? `[data-route-group-id="${CSS.escape(pending.targetId)}"]`
+        : `[data-api-card-id="${CSS.escape(pending.targetId)}"]`;
+      const card = document.querySelector(selector);
+      if (!card) {
+        state.pendingRelationshipFocus = null;
+        return;
+      }
+      if (pending.mode === 'model') {
+        const familyCard = card.closest('.fold-card');
+        if (familyCard) familyCard.open = true;
+      }
+      if (pending.mode === 'supplier') {
+        const platformCard = card.closest('.supplier-platform-group');
+        if (platformCard) platformCard.open = true;
+      }
+      card.open = true;
+      requestAnimationFrame(() => {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (state.pendingRelationshipFocus === pending) {
+          state.pendingRelationshipFocus = null;
+        }
       });
     }
 
@@ -4930,6 +5290,7 @@
         }
       }
 
+      renderRoutingRelationshipPanel();
       bindRoutingInputs();
       document.querySelectorAll('[data-route-family-quick]').forEach(select => {
         select.addEventListener('change', () => {
@@ -4951,6 +5312,7 @@
       });
       restoreRoutingLayout();
       scrollPendingModelRouteIntoView();
+      restorePendingRelationshipFocus();
       if (scopedApiAction) {
         state.apiActionScope = null;
       }
@@ -5072,6 +5434,7 @@
         });
       });
       document.querySelectorAll('[data-action]').forEach(button => {
+        if (button.closest('#routing-relationship-panel')) return;
         button.addEventListener('click', handleRoutingAction);
       });
       document.querySelectorAll('.fold-card[data-fold-key]').forEach(card => {
@@ -5089,9 +5452,19 @@
             if (!state.openApiProfileIds.includes(apiCardId)) {
               state.openApiProfileIds.push(apiCardId);
             }
+            state.relationshipSelection = { mode: 'supplier', routeId: '', apiProfileId: apiCardId };
+            renderRoutingRelationshipPanel();
           } else {
             state.openApiProfileIds = state.openApiProfileIds.filter(id => id !== apiCardId);
           }
+        });
+      });
+      document.querySelectorAll('.route-group[data-route-group-id]').forEach(card => {
+        card.addEventListener('toggle', () => {
+          const routeId = card.dataset.routeGroupId;
+          if (!routeId || !card.open) return;
+          state.relationshipSelection = { mode: 'model', routeId, apiProfileId: '' };
+          renderRoutingRelationshipPanel();
         });
       });
       document.querySelectorAll('.binding-card[data-binding-card-id]').forEach(card => {
@@ -5101,6 +5474,11 @@
           if (card.open) {
             if (!state.openBindingIds.includes(bindingId)) {
               state.openBindingIds.push(bindingId);
+            }
+            const binding = bindingById(bindingId);
+            if (binding) {
+              state.relationshipSelection = { mode: 'model', routeId: binding.model_route_id, apiProfileId: binding.api_profile_id || '' };
+              renderRoutingRelationshipPanel();
             }
           } else {
             state.openBindingIds = state.openBindingIds.filter(id => id !== bindingId);
@@ -5283,6 +5661,7 @@
     function updateApiProfileField(input, rerender = false) {
       const profile = apiProfileById(input.dataset.apiProfileId);
       if (!profile) return;
+      state.relationshipSelection = { mode: 'supplier', routeId: '', apiProfileId: profile.id };
       const key = input.dataset.apiKey;
       profile[key] = input.type === 'checkbox' ? input.checked : input.value;
       markRoutingDirty();
@@ -5295,6 +5674,7 @@
     function updateApiProfileNestedField(input, rerender = false) {
       const profile = apiProfileById(input.dataset.apiProfileId);
       if (!profile) return;
+      state.relationshipSelection = { mode: 'supplier', routeId: '', apiProfileId: profile.id };
       const path = input.dataset.apiPath;
       let value = input.value;
       if (input.type === 'checkbox') {
@@ -5452,6 +5832,7 @@
     function updateRouteField(input) {
       const route = routeById(input.dataset.routeId);
       if (!route) return;
+      state.relationshipSelection = { mode: 'model', routeId: route.id, apiProfileId: '' };
       const key = input.dataset.routeKey;
       if (key === 'public_model_name') {
         const validation = validatePublicModelName(input.value);
@@ -5477,6 +5858,7 @@
     function updateBindingField(input, rerender = false) {
       const binding = bindingById(input.dataset.bindingId);
       if (!binding) return;
+      state.relationshipSelection = { mode: 'model', routeId: binding.model_route_id, apiProfileId: binding.api_profile_id || '' };
       const key = input.dataset.bindingKey;
       if (input.type === 'checkbox') {
         binding[key] = input.checked;
@@ -6167,6 +6549,28 @@
     async function handleRoutingAction(event) {
       const button = event.currentTarget;
       const action = button.dataset.action;
+      if (action === 'focus-relationship-target') {
+        event.preventDefault();
+        event.stopPropagation();
+        const mode = button.dataset.relationshipMode;
+        if (mode === 'model') {
+          const routeId = button.dataset.routeId || '';
+          if (!routeById(routeId)) return;
+          state.relationshipSelection = { mode: 'model', routeId, apiProfileId: '' };
+          state.routingViewMode = 'by_model';
+          state.pendingRelationshipFocus = { mode: 'model', targetId: routeId };
+          renderRouting();
+        } else {
+          const apiProfileId = button.dataset.apiProfileId || '';
+          const profile = apiProfileById(apiProfileId);
+          if (!profile) return;
+          state.relationshipSelection = { mode: 'supplier', routeId: '', apiProfileId };
+          state.routingViewMode = 'by_supplier';
+          state.pendingRelationshipFocus = { mode: 'supplier', targetId: apiProfileId };
+          renderRouting();
+        }
+        return;
+      }
       if (action === 'activate-pricing-version' || action === 'reject-pricing-version') {
         event.preventDefault();
         event.stopPropagation();
@@ -6287,6 +6691,7 @@
         const binding = defaultRouteBinding(routeId);
         state.routeBindings.push(binding);
         state.selectedBindingId = binding.id;
+        state.relationshipSelection = { mode: 'model', routeId, apiProfileId: binding.api_profile_id || '' };
         markRoutingDirty();
         renderAll();
       }
@@ -6316,6 +6721,10 @@
       }
       if (action === 'select-binding') {
         state.selectedBindingId = button.dataset.bindingId;
+        const binding = bindingById(state.selectedBindingId);
+        if (binding) {
+          state.relationshipSelection = { mode: 'model', routeId: binding.model_route_id, apiProfileId: binding.api_profile_id || '' };
+        }
         renderRouting();
         renderTestModelOptions();
       }
@@ -7076,15 +7485,12 @@
     function appendClaudeShortcutRow(target, entry, models) {
       const row = document.createElement('div'); row.className = 'kv-block'; row.dataset.claudeShortcutRow = 'true';
       const name = document.createElement('input'); name.value = entry.name || ''; name.placeholder = '例如 claude-opus-5'; name.dataset.claudeShortcutName = 'true';
-      const tier = document.createElement('select'); tier.dataset.claudeShortcutTier = 'true';
-      ['haiku', 'sonnet', 'opus', 'fable'].forEach(value => tier.append(new Option(value, value, false, value === entry.tier)));
       const mapping = document.createElement('select'); mapping.dataset.claudeShortcutTarget = 'true'; mapping.append(new Option('选择已发布公共模型（未映射）', ''));
       models.forEach(model => mapping.append(new Option(model.display_name || model.id, model.id, false, model.id === entry.target)));
       const remove = document.createElement('button'); remove.className = 'danger'; remove.type = 'button'; remove.textContent = '删除'; remove.onclick = () => row.remove();
       const nameField = document.createElement('label'); nameField.textContent = '客户端模型名称'; nameField.append(name);
-      const tierField = document.createElement('label'); tierField.textContent = 'Claude 类型'; tierField.append(tier);
       const mappingField = document.createElement('label'); mappingField.textContent = '映射公共模型'; mappingField.append(mapping);
-      row.append(nameField, tierField, mappingField, remove); target.appendChild(row);
+      row.append(nameField, mappingField, remove); target.appendChild(row);
     }
 
     async function showClientShortcuts(client) {
@@ -7097,9 +7503,9 @@
       const title = document.createElement('label'); title.textContent = labels[client] || client; block.appendChild(title);
       if (client === 'claude_code') {
         const rows = Array.isArray(slots[client]) ? slots[client] : [];
-        const helper = document.createElement('div'); helper.className = 'helper-text'; helper.textContent = '模型名称由 Claude Code 识别；版本号可自行维护。Claude 类型决定 Anthropic 兼容层。'; block.appendChild(helper);
+        const helper = document.createElement('div'); helper.className = 'helper-text'; helper.textContent = '模型名称由 Claude Code 识别；可自行维护版本号。名称含 haiku、sonnet、opus 或 fable 时会自动识别类型，其他名称默认按 sonnet 处理。'; block.appendChild(helper);
         rows.forEach(entry => appendClaudeShortcutRow(block, entry, models));
-        const add = document.createElement('button'); add.className = 'secondary'; add.type = 'button'; add.textContent = '新增模型映射'; add.onclick = () => appendClaudeShortcutRow(block, { name: '', tier: 'sonnet', target: '' }, models); block.appendChild(add);
+        const add = document.createElement('button'); add.className = 'secondary'; add.type = 'button'; add.textContent = '新增模型映射'; add.onclick = () => appendClaudeShortcutRow(block, { name: '', target: '' }, models); block.appendChild(add);
       } else {
         Object.entries(slots[client] || {}).forEach(([slot, target]) => { const select = document.createElement('select'); select.dataset.shortcutClient = client; select.dataset.shortcutSlot = slot; select.append(new Option(`${slot}（未映射）`, '')); models.forEach(model => select.append(new Option(model.display_name || model.id, model.id, false, model.id === target))); const row = document.createElement('div'); row.className = 'provider-actions'; row.append(document.createTextNode(`${slot} -> `), select); block.appendChild(row); });
       }
@@ -7115,7 +7521,6 @@
       if (activeClientShortcut === 'claude_code') {
         slots.claude_code = Array.from(document.querySelectorAll('[data-claude-shortcut-row]')).map(row => ({
           name: row.querySelector('[data-claude-shortcut-name]').value.trim(),
-          tier: row.querySelector('[data-claude-shortcut-tier]').value,
           target: row.querySelector('[data-claude-shortcut-target]').value,
         })).filter(row => row.name);
       } else {
@@ -8161,6 +8566,7 @@
       }
     }
 
+    applyAppearanceTheme(readAppearanceThemePreference(), false);
     bindToolbar();
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape' && el('litellm-connection-help-overlay')?.dataset.open === 'true') {

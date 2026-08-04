@@ -43,6 +43,10 @@ docs/*.synctex.gz
 *.zip
 /dist/
 /packaging/build/
+desktop/dist/
+desktop/node_modules/
+.relaydeck-desktop-runtime/
+.playwright-mcp/
 
 # Downloaded or extracted temporary assets
 /*.js

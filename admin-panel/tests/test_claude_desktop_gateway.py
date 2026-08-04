@@ -24,6 +24,25 @@ class ClaudeDesktopGatewayTests(unittest.TestCase):
         )
         self.assertEqual(rewrite_shortcut_model("other", []), "other")
 
+    def test_builtin_claude_model_uses_unambiguous_configured_family_target(self):
+        self.assertEqual(
+            rewrite_shortcut_model(
+                "claude-opus-5",
+                [{"name": "Opus", "tier": "opus", "target": "claude-fable-5-pojia"}],
+            ),
+            "claude-haiku-relaydeck-claude-fable-5-pojia",
+        )
+        self.assertEqual(
+            rewrite_shortcut_model(
+                "claude-opus-5",
+                [
+                    {"name": "Opus 4", "tier": "opus", "target": "claude-fable-5-pojia"},
+                    {"name": "Opus 5", "tier": "opus", "target": "gpt-5.6-terra"},
+                ],
+            ),
+            "claude-opus-5",
+        )
+
     def test_shortcut_model_discovery_returns_only_mapped_slots(self):
         self.assertEqual(
             build_shortcut_model_discovery_response(

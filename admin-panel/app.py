@@ -5397,6 +5397,14 @@ DEFAULT_CLAUDE_SHORTCUTS = tuple(
 )
 
 
+def infer_claude_shortcut_tier(name: Any) -> str:
+    normalized = str(name or "").strip().lower()
+    for tier in CLAUDE_SHORTCUT_TIERS:
+        if tier in normalized:
+            return tier
+    return "sonnet"
+
+
 def normalize_client_shortcuts(raw: Any) -> dict[str, Any]:
     """Normalize legacy fixed Claude slots into editable Claude alias rows."""
     source = ensure_mapping(raw)
@@ -5405,7 +5413,7 @@ def normalize_client_shortcuts(raw: Any) -> dict[str, Any]:
     claude_source = source.get("claude_code")
     if isinstance(claude_source, dict):
         claude_rows = [
-            {"name": name, "tier": name.removeprefix("claude-").split("-", 1)[0], "target": str(target or "")}
+            {"name": name, "tier": infer_claude_shortcut_tier(name), "target": str(target or "")}
             for name, target in claude_source.items()
             if str(name).strip()
         ]
@@ -5413,7 +5421,7 @@ def normalize_client_shortcuts(raw: Any) -> dict[str, Any]:
         claude_rows = [
             {
                 "name": str(ensure_mapping(row).get("name") or "").strip(),
-                "tier": str(ensure_mapping(row).get("tier") or "sonnet").strip().lower(),
+                "tier": infer_claude_shortcut_tier(ensure_mapping(row).get("name")),
                 "target": str(ensure_mapping(row).get("target") or "").strip(),
             }
             for row in claude_source
