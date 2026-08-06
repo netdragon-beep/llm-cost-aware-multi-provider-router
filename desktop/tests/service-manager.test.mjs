@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import serviceManager from '../src/service-manager.js';
@@ -36,6 +38,11 @@ function createMemoryFs() {
     async writeFile(file, contents) {
       files.set(file, contents);
     },
+    async rename(from, to) {
+      const contents = await this.readFile(from);
+      files.set(to, contents);
+      files.delete(from);
+    },
     async unlink(file) {
       if (!files.delete(file)) {
         const error = new Error('not found');
@@ -54,8 +61,6 @@ function managerDependencies({ fetchImpl, spawnImpl, fs = createMemoryFs() } = {
     appDataPath: 'C:\\RelayDeckData',
     repoRoot: 'C:\\RelayDeckRepo',
     retryIntervalMs: 0,
-    processInspector: async () => null,
-    processLister: async () => [],
   };
 }
 
@@ -245,7 +250,7 @@ test('waitForManagementPanel times out when neither endpoint becomes healthy', a
   );
 });
 
-test('ensureRelayDeckRunning reuses a healthy existing service without creating a ledger', async () => {
+test('ensureRelayDeckRunning reuses a healthy existing service without launching', async () => {
   const fs = createMemoryFs();
   let spawnCalls = 0;
 
@@ -259,7 +264,67 @@ test('ensureRelayDeckRunning reuses a healthy existing service without creating 
 
   assert.equal(result.state, 'reused');
   assert.equal(spawnCalls, 0);
-  assert.equal(fs.files.size, 0);
+  assert.deepEqual(
+    JSON.parse(fs.files.get('C:\\RelayDeckData\\runtime\\relaydeck-services.json')),
+    { version: 1, Services: [] },
+  );
+});
+
+test('ensureRelayDeckRunning starts missing services when the desktop stack check is incomplete', async () => {
+  const fs = createMemoryFs();
+  let spawnCalls = 0;
+
+  const result = await ensureRelayDeckRunning({
+    ...managerDependencies({
+      fs,
+      fetchImpl: async () => response(true),
+      spawnImpl: () => {
+        spawnCalls += 1;
+        const child = new EventEmitter();
+        child.pid = 4242;
+        return child;
+      },
+    }),
+    requireFullStack: true,
+    isStackHealthy: async () => false,
+  });
+
+  assert.deepEqual(result, { state: 'started', url: 'http://127.0.0.1:8091' });
+  assert.equal(spawnCalls, 1);
+});
+
+test('ensureRelayDeckRunning replaces a stale manifest on healthy reuse so later stop has no targets', async () => {
+  const fs = createMemoryFs();
+  const manifestPath = 'C:\\RelayDeckData\\runtime\\relaydeck-services.json';
+  const stoppedTargets = [];
+  fs.files.set(manifestPath, JSON.stringify({
+    version: 1,
+    Services: [{ Pid: 1234, ExecutablePath: 'C:\\stale.exe' }],
+  }));
+
+  const result = await ensureRelayDeckRunning(managerDependencies({
+    fs,
+    fetchImpl: async () => response(true),
+    spawnImpl: () => {
+      throw new Error('healthy reuse must not launch a service');
+    },
+  }));
+
+  await stopElectronOwnedServices(managerDependencies({
+    fs,
+    spawnImpl: () => {
+      const manifest = JSON.parse(fs.files.get(manifestPath));
+      stoppedTargets.push(...manifest.Services);
+      const child = new EventEmitter();
+      child.pid = 4243;
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    },
+  }));
+
+  assert.equal(result.state, 'reused');
+  assert.deepEqual(JSON.parse(fs.files.get(manifestPath)), { version: 1, Services: [] });
+  assert.deepEqual(stoppedTargets, []);
 });
 
 test('ensureRelayDeckRunning starts after its initial health check times out', async () => {
@@ -299,7 +364,7 @@ test('ensureRelayDeckRunning starts after its initial health check times out', a
   assert.equal(fetchCalls, 3);
 });
 
-test('ensureRelayDeckRunning starts with the fixed hidden PowerShell launcher', async () => {
+test('ensureRelayDeckRunning invokes only the dedicated launcher with an absolute runtime manifest path', async () => {
   const fs = createMemoryFs();
   const launches = [];
   let healthChecks = 0;
@@ -329,86 +394,13 @@ test('ensureRelayDeckRunning starts with the fixed hidden PowerShell launcher', 
       '-WindowStyle',
       'Hidden',
       '-File',
-      'C:\\RelayDeckRepo\\scripts\\start-all.ps1',
+      'C:\\RelayDeckRepo\\scripts\\start-desktop-owned.ps1',
+      '-RuntimeManifestPath',
+      'C:\\RelayDeckData\\runtime\\relaydeck-services.json',
     ],
     { windowsHide: true },
   ]]);
   assert.equal(fs.files.size, 0);
-});
-
-test('ensureRelayDeckRunning records only new RelayDeck service PIDs', async () => {
-  const fs = createMemoryFs();
-  fs.files.set('C:\\RelayDeckRepo\\run\\litellm.pid', '100');
-  let healthChecks = 0;
-  const inspected = new Map([
-    [100, { pid: 100, executable: 'C:\\env\\Scripts\\litellm.exe', command: 'litellm --port 4100' }],
-    [200, { pid: 200, executable: 'C:\\env\\Scripts\\python.exe', command: 'python -m uvicorn app:app --app-dir C:\\RelayDeckRepo\\admin-panel' }],
-  ]);
-  const snapshots = [
-    [inspected.get(100)],
-    [inspected.get(100), inspected.get(200)],
-  ];
-
-  await ensureRelayDeckRunning({
-    ...managerDependencies({
-      fs,
-      fetchImpl: async () => response(++healthChecks > 1),
-      spawnImpl: () => {
-        fs.files.set('C:\\RelayDeckRepo\\run\\admin-panel.pid', '200');
-        const child = new EventEmitter();
-        child.pid = 4242;
-        return child;
-      },
-    }),
-    processLister: async () => snapshots.shift(),
-    processInspector: async (pid) => inspected.get(pid) ?? null,
-  });
-
-  const ledger = JSON.parse(fs.files.get('C:\\RelayDeckData\\runtime\\relaydeck-services.json'));
-  assert.deepEqual(ledger, {
-    version: 2,
-    servicePids: [inspected.get(200)],
-  });
-});
-
-test('ensureRelayDeckRunning does not claim a pre-existing user service with a stale pre-launch PID file', async () => {
-  const fs = createMemoryFs();
-  fs.files.set('C:\\RelayDeckRepo\\run\\litellm.pid', '999');
-  let healthChecks = 0;
-  const userProcess = { pid: 100, executable: 'C:\\env\\Scripts\\litellm.exe', command: 'litellm --port 4100' };
-  const electronProcess = { pid: 200, executable: 'C:\\env\\Scripts\\python.exe', command: 'python -m uvicorn app:app --app-dir C:\\RelayDeckRepo\\admin-panel' };
-  const snapshots = [
-    [userProcess],
-    [userProcess, electronProcess],
-  ];
-  const terminated = [];
-
-  await ensureRelayDeckRunning({
-    ...managerDependencies({
-      fs,
-      fetchImpl: async () => response(++healthChecks > 1),
-      spawnImpl: () => {
-        fs.files.set('C:\\RelayDeckRepo\\run\\litellm.pid', '100');
-        fs.files.set('C:\\RelayDeckRepo\\run\\admin-panel.pid', '200');
-        const child = new EventEmitter();
-        child.pid = 4242;
-        return child;
-      },
-    }),
-    processLister: async () => snapshots.shift(),
-    processInspector: async (pid) => (pid === userProcess.pid ? userProcess : electronProcess),
-  });
-
-  const ledger = JSON.parse(fs.files.get('C:\\RelayDeckData\\runtime\\relaydeck-services.json'));
-  assert.deepEqual(ledger.servicePids, [electronProcess]);
-
-  await stopElectronOwnedServices({
-    ...managerDependencies({ fs }),
-    processInspector: async (pid) => (pid === userProcess.pid ? userProcess : electronProcess),
-    terminateProcess: async (pid) => { terminated.push(pid); },
-  });
-
-  assert.deepEqual(terminated, [electronProcess.pid]);
 });
 
 test('ensureRelayDeckRunning handles launcher spawn errors', async () => {
@@ -427,59 +419,81 @@ test('ensureRelayDeckRunning handles launcher spawn errors', async () => {
   );
 });
 
-test('stopElectronOwnedServices does not stop an empty ledger', async () => {
+test('stopElectronOwnedServices invokes only the dedicated manifest stop script', async () => {
   const fs = createMemoryFs();
-  fs.files.set(
-    'C:\\RelayDeckData\\runtime\\relaydeck-services.json',
-    JSON.stringify({ version: 1, launchPids: [] }),
-  );
-  let spawnCalls = 0;
+  const launches = [];
 
-  await stopElectronOwnedServices(managerDependencies({
+  const result = await stopElectronOwnedServices(managerDependencies({
     fs,
-    spawnImpl: () => { spawnCalls += 1; },
+    spawnImpl: (...args) => {
+      launches.push(args);
+      const child = new EventEmitter();
+      child.pid = 4243;
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    },
   }));
 
-  assert.equal(spawnCalls, 0);
-  assert.equal(fs.files.size, 1);
+  assert.equal(result.state, 'stopped');
+  assert.deepEqual(launches, [[
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-File',
+      'C:\\RelayDeckRepo\\scripts\\stop-desktop-owned.ps1',
+      '-RuntimeManifestPath',
+      'C:\\RelayDeckData\\runtime\\relaydeck-services.json',
+    ],
+    { windowsHide: true },
+  ]]);
 });
 
-test('stopElectronOwnedServices never invokes the broad stop script and excludes pre-existing user services', async () => {
-  const fs = createMemoryFs();
-  const ledgerPath = 'C:\\RelayDeckData\\runtime\\relaydeck-services.json';
-  const userProcess = { pid: 100, executable: 'C:\\env\\Scripts\\litellm.exe', command: 'litellm --port 4100' };
-  const electronProcess = { pid: 200, executable: 'C:\\env\\Scripts\\python.exe', command: 'python -m uvicorn app:app --app-dir C:\\RelayDeckRepo\\admin-panel' };
-  fs.files.set(ledgerPath, JSON.stringify({ version: 2, servicePids: [electronProcess] }));
-  const terminated = [];
+test('desktop-owned scripts use held process handles with exact manifest identities', async () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const [startScript, stopScript, managerSource] = await Promise.all([
+    readFile(path.join(root, 'scripts', 'start-desktop-owned.ps1'), 'utf8'),
+    readFile(path.join(root, 'scripts', 'stop-desktop-owned.ps1'), 'utf8'),
+    readFile(path.join(root, 'desktop', 'src', 'service-manager.js'), 'utf8'),
+  ]);
 
-  const result = await stopElectronOwnedServices({
-    ...managerDependencies({ fs, spawnImpl: () => { throw new Error('must not spawn a stop script'); } }),
-    processInspector: async (pid) => (pid === 100 ? userProcess : electronProcess),
-    terminateProcess: async (pid) => { terminated.push(pid); },
-  });
-
-  assert.equal(result.state, 'stopped');
-  assert.deepEqual(terminated, [200]);
-  assert.ok(!terminated.includes(100));
-  assert.equal(fs.files.size, 0);
-});
-
-test('stopElectronOwnedServices refuses a PID whose command identity changed', async () => {
-  const fs = createMemoryFs();
-  const ledgerPath = 'C:\\RelayDeckData\\runtime\\relaydeck-services.json';
-  fs.files.set(ledgerPath, JSON.stringify({
-    version: 2,
-    servicePids: [{ pid: 200, executable: 'C:\\env\\Scripts\\litellm.exe', command: 'litellm --port 4100' }],
-  }));
-  const terminated = [];
-
-  const result = await stopElectronOwnedServices({
-    ...managerDependencies({ fs }),
-    processInspector: async () => ({ pid: 200, executable: 'C:\\Windows\\System32\\notepad.exe', command: 'notepad.exe notes.txt' }),
-    terminateProcess: async (pid) => { terminated.push(pid); },
-  });
-
-  assert.equal(result.state, 'stopped');
-  assert.deepEqual(terminated, []);
-  assert.equal(fs.files.size, 0);
+  assert.match(startScript, /Start-Process[\s\S]*-PassThru/);
+  assert.match(startScript, /Move-Item[\s\S]*RuntimeManifestPath/);
+  assert.match(startScript, /Write-DesktopManifest -Records @\(\)[\s\S]*\$services/);
+  assert.match(startScript, /\$env:FROM_INIT_PY = "true"/);
+  assert.match(startScript, /Name = "Open WebUI"; Port = \$openWebUiPort; FilePath = \$pythonExe; Arguments = @\("-m", "uvicorn", "open_webui\.main:app"/);
+  assert.match(startScript, /"--loop", "none"/);
+  assert.doesNotMatch(startScript, /Name = "Open WebUI";[\s\S]*?FilePath = \$openWebUiExe/);
+  assert.match(startScript, /ExecutablePath = \$executablePath/);
+  assert.match(startScript, /CommandLine = \$commandLine/);
+  assert.match(startScript, /CreationTime = \$creationTime/);
+  assert.match(startScript, /StartTime = \$startTime/);
+  assert.match(startScript, /\$Process\.HasExited/);
+  assert.match(startScript, /\$Process\.StartTime\.ToUniversalTime\(\)\.ToString\("o"\)/);
+  assert.match(startScript, /\$cimProcess\.ProcessId -ne \$processId/);
+  assert.match(startScript, /\$creationTime -cne \$startTime/);
+  assert.match(startScript, /Get-Process -Id \$record\.Pid[\s\S]*Test-OwnedRecordMatches -Record \$record -Process \$process[\s\S]*\$process\.Kill\(\)[\s\S]*\$process\.WaitForExit\(\)/);
+  assert.match(startScript, /if \(Test-PortListening -Port \$Service\.Port\) \{[\s\S]*continue/);
+  assert.match(startScript, /\$temporaryStartedProcesses = @\(\)[\s\S]*\$process = Start-Process[\s\S]*\$temporaryStartedProcesses \+= \$process[\s\S]*Get-OwnedProcessRecord/);
+  assert.match(startScript, /function Stop-TemporaryStartedProcesses[\s\S]*\$Process\.Refresh\(\)[\s\S]*!\$Process\.HasExited[\s\S]*\$Process\.Kill\(\)[\s\S]*\$Process\.WaitForExit\(\)/);
+  assert.match(startScript, /\} catch \{[\s\S]*Stop-TemporaryStartedProcesses -Processes \$temporaryStartedProcesses[\s\S]*Stop-OwnedRecords -Records \$ownedRecords[\s\S]*Remove-Item -LiteralPath \$RuntimeManifestPath -Force/);
+  assert.match(stopScript, /StartTime/);
+  assert.match(stopScript, /ExecutablePath/);
+  assert.match(stopScript, /CommandLine/);
+  assert.match(stopScript, /CreationTime/);
+  assert.match(stopScript, /Normalize-CommandLine \$cimProcess\.CommandLine\) -cne \$Record\.CommandLine/);
+  assert.match(stopScript, /\$Process\.HasExited/);
+  assert.match(stopScript, /\$Process\.StartTime\.ToUniversalTime\(\)\.ToString\("o"\)/);
+  assert.match(stopScript, /\$cimProcess\.ProcessId -ne \$Process\.Id/);
+  assert.match(stopScript, /\$cimProcess\.CreationDate\.ToUniversalTime\(\)\.ToString\("o"\) -cne \$startTime/);
+  assert.match(stopScript, /Get-Process -Id \$Record\.Pid[\s\S]*Test-OwnedRecordMatches -Record \$Record -Process \$process[\s\S]*\$process\.Kill\(\)[\s\S]*\$process\.WaitForExit\(\)/);
+  assert.doesNotMatch(startScript, /Stop-Process\s+-Id/i);
+  assert.doesNotMatch(stopScript, /Stop-Process\s+-Id/i);
+  assert.doesNotMatch(startScript, /ExpectedExecutable|CommandPattern/);
+  assert.doesNotMatch(stopScript, /ExpectedExecutable|CommandPattern|\.Contains\(/);
+  assert.doesNotMatch(stopScript, /Get-PortOwnerPid|Stop-ServiceProcess|stop-llm-stack/i);
+  assert.doesNotMatch(managerSource, /start-all\.ps1|stop-llm-stack|processLister|captureNewRelayDeckServices/);
 });

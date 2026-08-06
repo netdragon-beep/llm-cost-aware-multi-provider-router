@@ -1,9 +1,9 @@
 const fsPromises = require('node:fs/promises');
 const path = require('node:path');
-const { execFile, spawn } = require('node:child_process');
+const { spawn } = require('node:child_process');
 
 const MANAGEMENT_PANEL_URL = 'http://127.0.0.1:8091';
-const LEDGER_FILE_NAME = 'relaydeck-services.json';
+const RUNTIME_MANIFEST_FILE_NAME = 'relaydeck-services.json';
 const DEFAULT_RETRY_INTERVAL_MS = 250;
 
 function managementUrls(url) {
@@ -135,34 +135,19 @@ function runtimeDirectory(appDataPath) {
   return path.join(appDataPath, 'runtime');
 }
 
-function ledgerPath(appDataPath) {
-  return path.join(runtimeDirectory(appDataPath), LEDGER_FILE_NAME);
+function runtimeManifestPath(appDataPath) {
+  return path.join(runtimeDirectory(appDataPath), RUNTIME_MANIFEST_FILE_NAME);
 }
 
-async function readLedger(fs, appDataPath) {
-  try {
-    const ledger = JSON.parse(await fs.readFile(ledgerPath(appDataPath), 'utf8'));
-    return ledger.version === 2 && Array.isArray(ledger.servicePids) && ledger.servicePids.length > 0
-      ? ledger
-      : null;
-  } catch (error) {
-    if (error.code === 'ENOENT' || error instanceof SyntaxError) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-async function writeLedger(fs, appDataPath, servicePids) {
+async function writeEmptyRuntimeManifest(fs, appDataPath) {
+  const manifestPath = runtimeManifestPath(appDataPath);
+  const temporaryPath = `${manifestPath}.${process.pid}.${Date.now()}.tmp`;
   await fs.mkdir(runtimeDirectory(appDataPath), { recursive: true });
-  await fs.writeFile(
-    ledgerPath(appDataPath),
-    JSON.stringify({ version: 2, servicePids }),
-    'utf8',
-  );
+  await fs.writeFile(temporaryPath, JSON.stringify({ version: 1, Services: [] }), 'utf8');
+  await fs.rename(temporaryPath, manifestPath);
 }
 
-function powerShellInvocation(scriptPath) {
+function powerShellInvocation(scriptPath, runtimeManifest) {
   return [
     'powershell.exe',
     [
@@ -173,103 +158,42 @@ function powerShellInvocation(scriptPath) {
       'Hidden',
       '-File',
       scriptPath,
+      '-RuntimeManifestPath',
+      runtimeManifest,
     ],
     { windowsHide: true },
   ];
 }
 
-function startFixedScript(spawnImpl, scriptPath) {
-  const [command, args, options] = powerShellInvocation(scriptPath);
+function startFixedScript(spawnImpl, scriptPath, runtimeManifest) {
+  const [command, args, options] = powerShellInvocation(scriptPath, runtimeManifest);
   return spawnImpl(command, args, options);
 }
 
-function observeChildError(child) {
-  const failure = new Promise((_, reject) => child.once('error', reject));
+function observeChildFailure(child) {
+  const failure = new Promise((_, reject) => {
+    child.once('error', reject);
+    child.once('close', (exitCode) => {
+      if (exitCode !== 0) {
+        reject(new Error(`RelayDeck launcher exited with code ${exitCode}`));
+      }
+    });
+  });
   failure.catch(() => {});
   return failure;
 }
 
-function normalizeIdentityValue(value) {
-  return String(value ?? '').replace(/\\/g, '/').toLowerCase();
-}
-
-function isExpectedRelayDeckService(processInfo, repoRoot) {
-  if (!processInfo || !Number.isInteger(processInfo.pid) || processInfo.pid <= 0) {
-    return false;
-  }
-
-  if (normalizeIdentityValue(processInfo.executable).endsWith('/powershell.exe')) {
-    return false;
-  }
-
-  const command = `${processInfo.executable ?? ''} ${processInfo.command ?? ''}`.toLowerCase();
-  const adminPanelPath = normalizeIdentityValue(path.join(repoRoot, 'admin-panel'));
-  return command.includes('litellm')
-    || command.includes('open-webui')
-    || command.includes('claude_desktop_gateway:app')
-    || (command.includes('app:app') && normalizeIdentityValue(command).includes(adminPanelPath));
-}
-
-function sameProcessIdentity(recorded, current) {
-  return recorded.pid === current.pid
-    && normalizeIdentityValue(recorded.executable) === normalizeIdentityValue(current.executable)
-    && normalizeIdentityValue(recorded.command) === normalizeIdentityValue(current.command);
-}
-
-async function inspectWindowsProcess(pid) {
+function waitForChildExit(child) {
   return new Promise((resolve, reject) => {
-    const query = `Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress`;
-    execFile('powershell.exe', ['-NoProfile', '-Command', query], { windowsHide: true }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
+    child.once('error', reject);
+    child.once('close', (exitCode) => {
+      if (exitCode === 0) {
+        resolve();
+      } else {
+        reject(new Error(`RelayDeck launcher exited with code ${exitCode}`));
       }
-      if (!stdout.trim()) {
-        resolve(null);
-        return;
-      }
-      const processInfo = JSON.parse(stdout);
-      resolve({
-        pid: processInfo.ProcessId,
-        executable: processInfo.ExecutablePath,
-        command: processInfo.CommandLine,
-      });
     });
   });
-}
-
-async function listWindowsProcesses() {
-  return new Promise((resolve, reject) => {
-    const query = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress';
-    execFile('powershell.exe', ['-NoProfile', '-Command', query], { windowsHide: true }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      if (!stdout.trim()) {
-        resolve([]);
-        return;
-      }
-      const processInfos = JSON.parse(stdout);
-      resolve((Array.isArray(processInfos) ? processInfos : [processInfos]).map((processInfo) => ({
-        pid: processInfo.ProcessId,
-        executable: processInfo.ExecutablePath,
-        command: processInfo.CommandLine,
-      })));
-    });
-  });
-}
-
-async function listExpectedRelayDeckServices(processLister, repoRoot) {
-  const processes = await processLister();
-  return processes.filter((processInfo) => isExpectedRelayDeckService(processInfo, repoRoot));
-}
-
-async function captureNewRelayDeckServices(repoRoot, processLister, previousServices) {
-  const currentServices = await listExpectedRelayDeckServices(processLister, repoRoot);
-  return currentServices.filter((current) => !previousServices.some(
-    (previous) => sameProcessIdentity(previous, current),
-  ));
 }
 
 async function ensureRelayDeckRunning(options = {}) {
@@ -279,18 +203,25 @@ async function ensureRelayDeckRunning(options = {}) {
   const url = options.url ?? MANAGEMENT_PANEL_URL;
   const appDataPath = options.appDataPath;
   const repoRoot = options.repoRoot;
-  const processLister = options.processLister ?? listWindowsProcesses;
 
-  if (await isManagementPanelHealthy(fetchImpl, url, {
+  const managementHealthy = await isManagementPanelHealthy(fetchImpl, url, {
     ...options,
     requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_RETRY_INTERVAL_MS,
-  })) {
+  });
+  const stackHealthy = !options.requireFullStack
+    || (typeof options.isStackHealthy === 'function' && await options.isStackHealthy());
+
+  if (managementHealthy && stackHealthy) {
+    await writeEmptyRuntimeManifest(fs, appDataPath);
     return { state: 'reused', url };
   }
 
-  const previousServices = await listExpectedRelayDeckServices(processLister, repoRoot);
-  const child = startFixedScript(spawnImpl, path.join(repoRoot, 'scripts', 'start-all.ps1'));
-  const launcherFailure = observeChildError(child);
+  const child = startFixedScript(
+    spawnImpl,
+    path.join(repoRoot, 'scripts', 'start-desktop-owned.ps1'),
+    runtimeManifestPath(appDataPath),
+  );
+  const launcherFailure = observeChildFailure(child);
   const startupAbort = new AbortController();
   launcherFailure.catch((error) => startupAbort.abort(error));
   if (!Number.isInteger(child.pid) || child.pid <= 0) {
@@ -303,32 +234,19 @@ async function ensureRelayDeckRunning(options = {}) {
     }),
     launcherFailure,
   ]);
-  const servicePids = await captureNewRelayDeckServices(repoRoot, processLister, previousServices);
-  if (servicePids.length > 0) {
-    await writeLedger(fs, appDataPath, servicePids);
-  }
   return { state: 'started', url };
 }
 
 async function stopElectronOwnedServices(options = {}) {
-  const fs = options.fs ?? fsPromises;
   const appDataPath = options.appDataPath;
   const repoRoot = options.repoRoot;
-  const processInspector = options.processInspector ?? inspectWindowsProcess;
-  const terminateProcess = options.terminateProcess ?? ((pid) => process.kill(pid, 'SIGTERM'));
-  const ledger = await readLedger(fs, appDataPath);
-
-  if (!ledger) {
-    return { state: 'not-owned' };
-  }
-
-  for (const recorded of ledger.servicePids) {
-    const current = await processInspector(recorded.pid);
-    if (isExpectedRelayDeckService(current, repoRoot) && sameProcessIdentity(recorded, current)) {
-      await terminateProcess(recorded.pid);
-    }
-  }
-  await fs.unlink(ledgerPath(appDataPath));
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const child = startFixedScript(
+    spawnImpl,
+    path.join(repoRoot, 'scripts', 'stop-desktop-owned.ps1'),
+    runtimeManifestPath(appDataPath),
+  );
+  await waitForChildExit(child);
   return { state: 'stopped' };
 }
 

@@ -3,12 +3,37 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; frame-src http://127.0.0.1:8091; connect-src http://127.0.0.1:8091 http://127.0.0.1:4100 http://127.0.0.1:4102 http://127.0.0.1:3000">
     <title>RelayDeck 桌面端</title>
+    <link rel="stylesheet" href="shell.css">
   </head>
   <body>
-    <main>
-      <h1>RelayDeck 桌面端</h1>
-      <p>桌面控制台正在准备中。</p>
+    <header class="titlebar">
+      <div class="brand"><span class="brand-mark">R</span><span>RelayDeck</span><span class="edition">桌面端</span></div>
+      <div class="window-actions" aria-label="窗口控制">
+        <button id="minimize-window" class="window-button" type="button" aria-label="最小化">-</button>
+        <button id="close-window" class="window-button close" type="button" aria-label="隐藏到托盘">×</button>
+      </div>
+    </header>
+    <section class="statusbar" aria-label="服务状态">
+      <div class="status-summary"><span id="startup-dot" class="dot loading"></span><strong id="startup-label">正在连接本地服务</strong><span id="startup-detail">首次启动可能需要一点时间</span></div>
+      <div class="service-list">
+        <span data-service="management"><i class="dot"></i>管理台</span>
+        <span data-service="litellm"><i class="dot"></i>LiteLLM</span>
+        <span data-service="claude"><i class="dot"></i>Claude 网关</span>
+        <span data-service="openWebUI"><i class="dot"></i>Open WebUI</span>
+      </div>
+      <button id="restart-services" class="toolbar-button" type="button">重启服务</button>
+    </section>
+    <main class="content">
+      <div id="loading-state" class="loading-state"><div class="spinner"></div><p>正在准备 RelayDeck 管理台...</p></div>
+      <div id="error-state" class="error-state" hidden>
+        <h1>管理台暂时无法连接</h1>
+        <p id="error-detail">请检查本地服务状态后重试。</p>
+        <div class="error-actions"><button id="retry-services" class="primary-button" type="button">重试连接</button><button id="open-logs" class="secondary-button" type="button">打开日志目录</button></div>
+      </div>
+      <iframe id="management-panel" title="RelayDeck 管理台" hidden></iframe>
     </main>
+    <script src="shell.js"></script>
   </body>
 </html>

@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "electron .",
     "test": "node --test",
-    "package:win": "electron-builder --win"
+    "package:win": "electron-builder --win",
+    "postinstall": "node scripts/ensure-electron-runtime.js"
   },
   "devDependencies": {
+    "@electron/get": "2.0.3",
     "electron": "32.2.0",
     "electron-builder": "25.1.8"
   }
