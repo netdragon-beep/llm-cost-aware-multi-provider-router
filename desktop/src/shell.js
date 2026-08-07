@@ -40,7 +40,7 @@
     setStartup(status);
     setVisible(loadingState, false);
     setVisible(errorState, false);
-    if (!panel.src) {
+    if (!panel.getAttribute('src')) {
       panel.src = status.managementUrl;
     }
     setVisible(panel, true);

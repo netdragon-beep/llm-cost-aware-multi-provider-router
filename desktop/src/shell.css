@@ -6,6 +6,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body { display: flex; flex-direction: column; background: #f1f5f9; color: #0f172a; }
 .titlebar { height: 46px; display: flex; align-items: center; justify-content: space-between; padding-left: 16px; background: #0f172a; color: #f8fafc; -webkit-app-region: drag; user-select: none; }

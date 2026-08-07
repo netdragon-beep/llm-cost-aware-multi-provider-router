@@ -151,6 +151,16 @@ test('Electron runtime repair uses a fixed local package path and Windows tar ex
   assert.match(source, /process\.env\.LOCALAPPDATA/);
 });
 
+test('desktop shell hides inactive states and assigns the management iframe URL explicitly', async () => {
+  const [shellScript, shellCss] = await Promise.all([
+    readDesktopSource('src/shell.js'),
+    readDesktopSource('src/shell.css'),
+  ]);
+
+  assert.match(shellScript, /panel\.getAttribute\('src'\)/);
+  assert.match(shellCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+});
+
 test('gitignore excludes desktop dependency installs', async () => {
   const gitignore = await readProjectSource('.gitignore');
 
