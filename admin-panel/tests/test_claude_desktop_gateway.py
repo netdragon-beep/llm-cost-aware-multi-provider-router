@@ -24,6 +24,16 @@ class ClaudeDesktopGatewayTests(unittest.TestCase):
         )
         self.assertEqual(rewrite_shortcut_model("other", []), "other")
 
+    def test_published_public_model_rewrites_to_its_internal_relaydeck_alias(self):
+        self.assertEqual(
+            rewrite_shortcut_model(
+                "gpt-5.6-terra",
+                [],
+                ["claude-fable-5", "gpt-5.6-terra"],
+            ),
+            "claude-haiku-relaydeck-gpt-5-6-terra",
+        )
+
     def test_builtin_claude_model_uses_unambiguous_configured_family_target(self):
         self.assertEqual(
             rewrite_shortcut_model(
@@ -131,6 +141,36 @@ class ClaudeDesktopGatewayTests(unittest.TestCase):
                 "first_id": None,
                 "last_id": None,
             },
+        )
+
+    def test_shortcut_discovery_includes_all_published_public_models(self):
+        response = build_shortcut_model_discovery_response(
+            [{"name": "Opus", "tier": "opus", "target": "claude-fable-5"}],
+            ["claude-fable-5", "gpt-5.6-terra"],
+        )
+
+        self.assertEqual(
+            response["data"],
+            [
+                {
+                    "type": "model",
+                    "id": "claude-fable-5",
+                    "display_name": "claude-fable-5",
+                    "anthropic_family_tier": "fable",
+                },
+                {
+                    "type": "model",
+                    "id": "gpt-5.6-terra",
+                    "display_name": "gpt-5.6-terra",
+                    "anthropic_family_tier": "sonnet",
+                },
+                {
+                    "type": "model",
+                    "id": "Opus",
+                    "display_name": "Opus -> claude-fable-5",
+                    "anthropic_family_tier": "opus",
+                },
+            ],
         )
 
 

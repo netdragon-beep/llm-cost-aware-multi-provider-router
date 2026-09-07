@@ -68,8 +68,8 @@ CCSWITCH_WEB_DATA = Path(
 )
 
 LITELLM_EXE = RUNTIME_PATHS.tool_path("litellm")
-OPEN_WEBUI_EXE = RUNTIME_PATHS.tool_path("open-webui")
 PYTHON_EXE = RUNTIME_PATHS.python_executable
+CLAUDE_GATEWAY_COMMAND_PATTERN = "claude_desktop_gateway:app"
 QUOTA_ADAPTERS_DIR = ROOT / "quota-adapters"
 BALANCE_REFRESH_INTERVAL_SEC = max(60, int(os.environ.get("BALANCE_REFRESH_INTERVAL_SEC", "300") or 300))
 logger = logging.getLogger(__name__)
@@ -344,6 +344,8 @@ def build_claude_code_settings_content(previous: str, base_url: str) -> str:
     """Create a JSON preview with the auth token redacted."""
     settings = _parse_claude_code_settings(previous)
     current_env = settings["env"]
+    # Claude Code skips gateway /v1/models discovery while this flag is enabled.
+    current_env.pop("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", None)
     current_env.update(
         {
             "ANTHROPIC_BASE_URL": base_url.rstrip("/"),
@@ -363,6 +365,7 @@ def apply_claude_code_settings_candidate(
     """Validate, back up, and atomically apply a reviewed Claude Code candidate."""
     settings = _parse_claude_code_settings(candidate)
     current_env = settings["env"]
+    current_env.pop("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", None)
     current_env.update(
         {
             "ANTHROPIC_BASE_URL": base_url.rstrip("/"),
@@ -420,6 +423,234 @@ def client_integration_paths(home: Path | None = None) -> dict[str, Path]:
         "opencode_config": root / ".config" / "opencode" / "opencode.jsonc",
         "claude_config": RUNTIME_PATHS.claude_code_settings_path(root),
     }
+
+
+# Derived from the MIT-licensed Orca agent catalog. RelayDeck deliberately keeps
+# detection metadata separate from gateway configuration support: a CLI on PATH
+# is not proof that its provider, protocol, or config file is safe to rewrite.
+AGENT_INTEGRATION_REGISTRY: tuple[dict[str, str], ...] = (
+    {"id": "claude-code", "label": "Claude Code", "command": "claude", "protocol": "Anthropic 兼容", "integration_level": "full", "client_key": "claude_code", "homepage_url": "https://code.claude.com/docs/"},
+    {"id": "claude-agent-teams", "label": "Claude Agent Teams", "command": "orca.cmd claude-teams", "detection_command": "orca", "protocol": "Claude Code 启动模式", "integration_level": "detect_only", "homepage_url": "https://code.claude.com/docs/agent-teams"},
+    {"id": "openclaude", "label": "OpenClaude", "command": "openclaude", "protocol": "待验证", "integration_level": "detect_only", "homepage_url": "https://openclaude.gitlawb.com/"},
+    {"id": "codex", "label": "Codex", "command": "codex", "protocol": "OpenAI 兼容", "integration_level": "full", "client_key": "codex", "homepage_url": "https://github.com/openai/codex"},
+    {"id": "workbuddy", "label": "WorkBuddy", "command": "codebuddy / cbc", "detection_command": "codebuddy", "desktop_shortcut": "WorkBuddy.lnk", "protocol": "腾讯 CodeBuddy CLI（厂商原生）", "integration_level": "detect_only", "configuration_status": "已确认内置 CodeBuddy CLI；RelayDeck 网关配置方式待官方验证", "homepage_url": "https://www.codebuddy.ai/docs/zh/cli/cli-reference"},
+    {"id": "dumate", "label": "百度搭子 DuMate", "command": "dumate", "desktop_shortcut": "DuMate.lnk", "protocol": "桌面 Agent（厂商原生）", "integration_level": "detect_only", "gateway_configuration_supported": False, "configuration_status": "暂不支持外部网关配置；仅保留安装检测与官方文档入口", "homepage_url": "https://cloud.baidu.com/doc/Dumate/index.html"},
+    {"id": "grok", "label": "Grok", "command": "grok", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://x.ai/cli"},
+    {"id": "copilot", "label": "GitHub Copilot", "command": "copilot", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"},
+    {"id": "opencode", "label": "OpenCode", "command": "opencode", "protocol": "OpenAI 兼容", "integration_level": "full", "client_key": "opencode", "homepage_url": "https://opencode.ai/docs/cli/"},
+    {"id": "mimo-code", "label": "MiMo Code", "command": "mimo", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://mimo.xiaomi.com/coder"},
+    {"id": "ante", "label": "Ante", "command": "ante", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/AntigmaLabs/ante-preview"},
+    {"id": "trae", "label": "Trae", "command": "traecli", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://docs.trae.cn/cli_get-started-with-trae-cli"},
+    {"id": "pi", "label": "Pi", "command": "pi", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://pi.dev"},
+    {"id": "omp", "label": "OMP", "command": "omp", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://omp.sh"},
+    {"id": "prime-agent", "label": "Prime Agent", "command": "prime-agent", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/PrimeIntellect-ai/prime-agent"},
+    {"id": "gemini", "label": "Gemini", "command": "gemini", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/google-gemini/gemini-cli"},
+    {"id": "antigravity", "label": "Antigravity", "command": "agy", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://antigravity.google/docs/cli-overview"},
+    {"id": "aider", "label": "Aider", "command": "aider", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://aider.chat/docs/"},
+    {"id": "goose", "label": "Goose", "command": "goose", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://block.github.io/goose/docs/quickstart/"},
+    {"id": "amp", "label": "Amp", "command": "amp", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://ampcode.com/manual#install"},
+    {"id": "kilo", "label": "Kilocode", "command": "kilo", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://kilo.ai/docs/cli"},
+    {"id": "kiro", "label": "Kiro", "command": "kiro-cli", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://kiro.dev/docs/cli/"},
+    {"id": "crush", "label": "Charm", "command": "crush", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://github.com/charmbracelet/crush"},
+    {"id": "aug", "label": "Auggie", "command": "auggie", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://docs.augmentcode.com/cli/overview"},
+    {"id": "autohand", "label": "Autohand Code", "command": "autohand", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/autohandai/code-cli"},
+    {"id": "cline", "label": "Cline", "command": "cline", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://docs.cline.bot/cline-cli/overview"},
+    {"id": "codebuff", "label": "Codebuff", "command": "codebuff", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://www.codebuff.com/docs/help/quick-start"},
+    {"id": "command-code", "label": "Command Code", "command": "command-code", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://commandcode.ai/docs/quickstart"},
+    {"id": "continue", "label": "Continue", "command": "cn", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://docs.continue.dev/guides/cli"},
+    {"id": "cursor", "label": "Cursor", "command": "cursor-agent", "protocol": "OpenAI 兼容候选", "integration_level": "detect_only", "homepage_url": "https://cursor.com/cli"},
+    {"id": "droid", "label": "Droid", "command": "droid", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://docs.factory.ai/cli/getting-started/quickstart"},
+    {"id": "kimi", "label": "Kimi", "command": "kimi", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://www.kimi.com/code/docs/en/kimi-code-cli/getting-started.html"},
+    {"id": "mistral-vibe", "label": "Mistral Vibe", "command": "vibe", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/mistralai/mistral-vibe"},
+    {"id": "qwen-code", "label": "Qwen Code", "command": "qwen", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/QwenLM/qwen-code"},
+    {"id": "rovo", "label": "Rovo Dev", "command": "rovo", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://support.atlassian.com/rovo/docs/install-and-run-rovo-dev-cli-on-your-device/"},
+    {"id": "hermes", "label": "Hermes", "command": "hermes", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://hermes-agent.nousresearch.com/docs/"},
+    {"id": "devin", "label": "Devin", "command": "devin", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://devin.ai/cli"},
+    {"id": "openclaw", "label": "OpenClaw", "command": "openclaw", "protocol": "厂商原生 / 待验证", "integration_level": "detect_only", "homepage_url": "https://github.com/openclaw/openclaw"},
+)
+AGENT_COMMAND_DETECTION_CACHE_TTL_SEC = 30.0
+_agent_command_detection_cache: tuple[float, frozenset[str]] | None = None
+_agent_shortcut_detection_cache: tuple[float, frozenset[str]] | None = None
+AGENT_ACTIVITY_TIMESTAMP_FIELDS = ("last_viewed_at", "last_configured_at", "last_detected_at")
+
+
+def normalize_agent_activity(raw: Any) -> dict[str, dict[str, int]]:
+    """Keep only known Agent IDs and local activity timestamps."""
+    known_ids = {str(item["id"]) for item in AGENT_INTEGRATION_REGISTRY}
+    normalized: dict[str, dict[str, int]] = {}
+    for agent_id, value in ensure_mapping(raw).items():
+        if str(agent_id) not in known_ids:
+            continue
+        timestamps: dict[str, int] = {}
+        for field in AGENT_ACTIVITY_TIMESTAMP_FIELDS:
+            try:
+                timestamp = max(0, int(ensure_mapping(value).get(field) or 0))
+            except (TypeError, ValueError):
+                timestamp = 0
+            if timestamp:
+                timestamps[field] = timestamp
+        if timestamps:
+            normalized[str(agent_id)] = timestamps
+    return normalized
+
+
+def record_agent_activity(agent_id: str, event: str, *, timestamp: int | None = None) -> dict[str, int]:
+    """Persist minimal local Agent activity without rewriting gateway configuration."""
+    event_fields = {"viewed": "last_viewed_at", "configured": "last_configured_at", "detected": "last_detected_at"}
+    field = event_fields.get(event)
+    known_ids = {str(item["id"]) for item in AGENT_INTEGRATION_REGISTRY}
+    if not field or agent_id not in known_ids:
+        raise ValueError("Unsupported Agent activity event")
+
+    try:
+        raw_state = json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else load_management_state()
+    except (OSError, json.JSONDecodeError):
+        raw_state = load_management_state()
+    if not isinstance(raw_state, dict):
+        raw_state = {}
+    activity = normalize_agent_activity(raw_state.get("agent_activity"))
+    entry = dict(activity.get(agent_id, {}))
+    entry[field] = max(0, int(timestamp if timestamp is not None else time.time()))
+    activity[agent_id] = entry
+    raw_state["agent_activity"] = activity
+    _write_text_atomically(STATE_PATH, json.dumps(raw_state, ensure_ascii=False, indent=2))
+    return entry
+_agent_command_detection_lock = threading.Lock()
+
+
+def _detected_agent_commands(*, force: bool = False) -> frozenset[str]:
+    """Scan each PATH directory once instead of running shutil.which per Agent."""
+    global _agent_command_detection_cache
+    commands = {
+        str(entry.get("detection_command") or entry["command"]).split(maxsplit=1)[0].lower()
+        for entry in AGENT_INTEGRATION_REGISTRY
+    }
+    now = time.monotonic()
+    with _agent_command_detection_lock:
+        cached = _agent_command_detection_cache
+        if not force and cached and now - cached[0] < AGENT_COMMAND_DETECTION_CACHE_TTL_SEC:
+            return cached[1]
+
+        pathext = tuple(
+            extension.lower()
+            for extension in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+            if extension
+        )
+        filenames = {
+            f"{command}{extension}": command
+            for command in commands
+            for extension in ("", *pathext)
+        }
+        found: set[str] = set()
+        for raw_directory in os.environ.get("PATH", "").split(os.pathsep):
+            if not raw_directory or len(found) == len(commands):
+                continue
+            try:
+                with os.scandir(raw_directory) as entries:
+                    for candidate in entries:
+                        command = filenames.get(candidate.name.lower())
+                        if command and candidate.is_file():
+                            found.add(command)
+            except OSError:
+                continue
+        detected = frozenset(found)
+        _agent_command_detection_cache = (now, detected)
+        return detected
+
+
+def _detected_agent_shortcuts(*, force: bool = False) -> frozenset[str]:
+    """Detect registered desktop Agents from standard Windows Start Menu shortcuts."""
+    global _agent_shortcut_detection_cache
+    shortcuts = {
+        str(entry.get("desktop_shortcut") or "").strip().lower()
+        for entry in AGENT_INTEGRATION_REGISTRY
+        if str(entry.get("desktop_shortcut") or "").strip()
+    }
+    if not shortcuts:
+        return frozenset()
+    now = time.monotonic()
+    with _agent_command_detection_lock:
+        cached = _agent_shortcut_detection_cache
+        if not force and cached and now - cached[0] < AGENT_COMMAND_DETECTION_CACHE_TTL_SEC:
+            return cached[1]
+        roots = [
+            Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+            Path(os.environ.get("PROGRAMDATA") or "C:/ProgramData") / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+        ]
+        found: set[str] = set()
+        for root in roots:
+            if not root.is_dir():
+                continue
+            try:
+                for path in root.rglob("*.lnk"):
+                    if path.name.lower() in shortcuts:
+                        found.add(path.name.lower())
+            except OSError:
+                continue
+        detected = frozenset(found)
+        _agent_shortcut_detection_cache = (now, detected)
+        return detected
+
+
+def agent_integration_registry_status(
+    which: Any | None = None,
+    *,
+    force_detection: bool = False,
+) -> list[dict[str, Any]]:
+    """Return safe local command detection without launching or configuring agents."""
+    management_state = load_management_state()
+    clients = client_integration_status(management_state)["clients"]
+    activity = normalize_agent_activity(management_state.get("agent_activity"))
+    detected_commands = _detected_agent_commands(force=force_detection) if which is None else frozenset()
+    detected_shortcuts = _detected_agent_shortcuts(force=force_detection) if which is None else frozenset()
+    agents: list[dict[str, Any]] = []
+    for registry_index, source in enumerate(AGENT_INTEGRATION_REGISTRY):
+        entry = dict(source)
+        client_key = entry.pop("client_key", "")
+        detection_command = str(entry.pop("detection_command", entry["command"])).split(maxsplit=1)[0]
+        desktop_shortcut = str(entry.pop("desktop_shortcut", "")).strip().lower()
+        full_integration = entry["integration_level"] == "full"
+        client = clients.get(client_key, {}) if full_integration else {}
+        configured = bool(client.get("configured")) if full_integration else False
+        detected = (
+            detection_command.lower() in detected_commands or desktop_shortcut in detected_shortcuts
+            if which is None
+            else bool(which(detection_command))
+        )
+        activity_entry = activity.get(str(entry["id"]), {})
+        configured_at = int(activity_entry.get("last_configured_at") or client.get("config_updated_at") or 0) if configured else 0
+        entry.update(
+            {
+                "detected": detected,
+                "configured": configured,
+                "model_count": int(client.get("model_count") or 0) if full_integration else 0,
+                "config_updated_at": int(client.get("config_updated_at") or 0) if configured else 0,
+                "last_viewed_at": int(activity_entry.get("last_viewed_at") or 0),
+                "last_configured_at": configured_at,
+                "last_detected_at": int(activity_entry.get("last_detected_at") or 0),
+                "configuration_status": "完整自动配置" if full_integration else str(entry.get("configuration_status") or "仅检测，接入方式待验证"),
+                # 未明确验证的 Agent 仍保持原有活动排序；只有显式 False 才表示不支持。
+                "gateway_configuration_supported": bool(entry.get("gateway_configuration_supported", True)),
+                "safe_mode_notice": "RelayDeck 不会自动追加跳过权限或绕过审批参数。",
+                "_registry_index": registry_index,
+            }
+        )
+        agents.append(entry)
+    agents.sort(
+        key=lambda entry: (
+            1 if not entry["gateway_configuration_supported"] else 0,
+            -(1 if entry["configured"] else 0),
+            -entry["last_configured_at"],
+            -(1 if entry["detected"] else 0),
+            -(1 if entry["last_viewed_at"] else 0),
+            -entry["last_viewed_at"],
+            -entry["config_updated_at"],
+            entry["_registry_index"],
+        )
+    )
+    for entry in agents:
+        entry.pop("_registry_index", None)
+    return agents
 
 
 def _model_supports_image(route: dict[str, Any], model_name: str) -> bool:
@@ -506,6 +737,47 @@ def configure_codex_client(config_path: Path, catalog_path: Path, models: list[d
     previous = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     candidate = build_codex_config_content(previous, catalog_path, models, base_url)
     return apply_codex_config_candidate(config_path, catalog_path, candidate, models)
+
+
+def _codex_sync_summary(content: str, *, fallback_label: str = "未设置") -> dict[str, str]:
+    """Describe a Codex config without returning credential values."""
+    try:
+        config = tomllib.loads(content) if content.strip() else {}
+    except tomllib.TOMLDecodeError:
+        return {
+            "route": "当前 config.toml 无法解析，请先检查原配置。",
+            "credential": "因配置语法错误，无法识别密钥引用。",
+        }
+    provider_name = str(config.get("model_provider") or "").strip()
+    model_name = str(config.get("model") or "").strip()
+    providers = ensure_mapping(config.get("model_providers"))
+    provider = ensure_mapping(providers.get(provider_name)) if provider_name else {}
+    base_url = str(provider.get("base_url") or "").strip()
+    env_key = str(provider.get("env_key") or "").strip()
+    if env_key:
+        credential = f"环境变量引用：{env_key}（值不显示）"
+    elif "api_key" in provider:
+        credential = "配置文件内已有密钥（值不显示）"
+    else:
+        credential = "未识别到 Provider 密钥引用"
+    provider_text = provider_name or fallback_label
+    model_text = model_name or "未设置模型"
+    address_text = f"，入口 {base_url}" if base_url else ""
+    return {"route": f"Codex -> {provider_text} -> {model_text}{address_text}", "credential": credential}
+
+
+def codex_sync_preview_summary(current: str, candidate: str) -> dict[str, str]:
+    """Return a user-facing, credential-safe explanation for the Codex preview."""
+    before = _codex_sync_summary(current, fallback_label="当前未指定 Provider")
+    after = _codex_sync_summary(candidate, fallback_label="RelayDeck")
+    return {
+        "current_route": before["route"],
+        "next_route": after["route"],
+        "current_credential": before["credential"],
+        "next_credential": after["credential"],
+        "preservation": "除默认 Provider、默认模型和 RelayDeck Provider 区块外，现有 Provider 与其环境变量引用都会保留，不会删除。",
+        "recovery": "确认应用前会自动备份 config.toml 和模型目录；可在本窗口选择备份恢复。",
+    }
 
 
 def _codex_catalog_payload(models: list[dict[str, Any]]) -> str:
@@ -665,11 +937,10 @@ def resolve_secret(ref: str, env_map: dict[str, str]) -> str:
     return ref
 
 
-def get_ports(env_map: dict[str, str]) -> tuple[int, int, int]:
+def get_ports(env_map: dict[str, str]) -> tuple[int, int]:
     litellm_port = int(env_map.get("LITELLM_PORT", "4100"))
-    open_webui_port = int(env_map.get("OPEN_WEBUI_PORT", "8090"))
     admin_port = int(env_map.get("ADMIN_PANEL_PORT", "8091"))
-    return litellm_port, open_webui_port, admin_port
+    return litellm_port, admin_port
 
 
 def looks_like_env_var_name(value: str | None) -> bool:
@@ -3848,15 +4119,6 @@ def build_preflight_report(
                 "message": "LITELLM_MASTER_KEY 仍是默认占位值，正式使用前必须更换。",
             }
         )
-    if is_placeholder_secret(env_map.get("OPEN_WEBUI_SECRET_KEY")):
-        items.append(
-            {
-                "level": "error",
-                "code": "weak-webui-secret",
-                "message": "OPEN_WEBUI_SECRET_KEY 仍是默认占位值，正式使用前必须更换。",
-            }
-        )
-
     cors_value = (env_map.get("CORS_ALLOW_ORIGIN") or "").strip()
     if cors_value == "*":
         items.append(
@@ -4069,6 +4331,7 @@ DEFAULT_MODEL_FAMILIES = [
     "Banana 系列",
     "Grok 系列",
     "Mimo 系列",
+    "未分类",
 ]
 
 
@@ -4106,7 +4369,7 @@ def guess_model_family(model_name: str) -> str:
         return "DeepSeek 系列"
     if name.startswith("gemini"):
         return "Gemini 系列"
-    return ""
+    return "未分类"
 
 
 def validate_public_model_name(value: Any) -> str:
@@ -4464,6 +4727,7 @@ def load_management_state() -> dict[str, Any]:
                 "router_settings": state.get("router_settings", {}) or {},
                 "litellm_settings": state.get("litellm_settings", {}) or {},
                 "gateway_runtime_configs": state.get("gateway_runtime_configs"),
+                "agent_activity": normalize_agent_activity(state.get("agent_activity")),
             }
         providers = [item for item in ensure_list(state.get("providers")) if isinstance(item, dict)]
         return management_state_from_providers(
@@ -4689,6 +4953,7 @@ def save_management_state(
     supplier_quotas: dict[str, dict[str, Any]] | None = None,
     *,
     gateway_runtime_configs: dict[str, dict[str, Any]] | None = None,
+    agent_activity: dict[str, dict[str, int]] | None = None,
 ) -> None:
     normalized_suppliers = normalize_suppliers(suppliers)
     normalized_api_profiles = normalize_api_profiles(api_profiles, normalized_suppliers)
@@ -4706,6 +4971,12 @@ def save_management_state(
                 supplier_quotas = ensure_mapping(json.loads(STATE_PATH.read_text(encoding="utf-8")).get("supplier_quotas"))
             except Exception:
                 supplier_quotas = {}
+    if agent_activity is None:
+        try:
+            current_raw_state = json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            current_raw_state = {}
+        agent_activity = normalize_agent_activity(ensure_mapping(current_raw_state).get("agent_activity"))
     normalized_supplier_quotas = {
         str(key).strip().lower(): split_quota_credentials(ensure_mapping(value))[0]
         for key, value in ensure_mapping(supplier_quotas).items()
@@ -4729,6 +5000,7 @@ def save_management_state(
         "providers": providers,
         "router_settings": router_settings or {},
         "litellm_settings": litellm_settings or {},
+        "agent_activity": normalize_agent_activity(agent_activity),
     }
     if gateway_runtime_configs is not None:
         next_state["gateway_runtime_configs"] = gateway_runtime_configs
@@ -4944,7 +5216,13 @@ def service_status(port: int, target: Path | None = None, command_pattern: str =
             )
         except Exception:
             continue
-    return {"port": port, "listening": bool(pids), "processes": processes}
+    managed_processes = [item for item in processes if item["matches_target"]]
+    return {
+        "port": port,
+        "listening": bool(managed_processes) if target or command_pattern else bool(pids),
+        "port_occupied": bool(pids),
+        "processes": processes,
+    }
 
 
 def run_service_script(script_name: str) -> dict[str, str]:
@@ -4980,25 +5258,16 @@ def restart_litellm() -> None:
 def control_service(service_name: str, action: str) -> dict[str, Any]:
     if service_name == "litellm":
         target, command_pattern, start_script = LITELLM_EXE, "litellm", "start-litellm"
-    elif service_name == "open-webui":
-        target, command_pattern, start_script = OPEN_WEBUI_EXE, "open-webui", "start-open-webui"
     else:
         raise ValueError(f"不支持控制服务：{service_name}")
 
     if action == "start":
         return run_service_script(start_script)
     if action == "stop":
-        if service_name == "litellm":
-            return run_service_script("stop-litellm")
-        stop_processes_by_target(target=target, command_pattern=command_pattern)
-        return {"stdout": f"已停止 {service_name}", "stderr": ""}
+        return run_service_script("stop-litellm")
     if action == "restart":
-        if service_name == "litellm":
-            restart_litellm()
-            return {"stdout": f"宸查噸啟 {service_name}", "stderr": ""}
-        stop_processes_by_target(target=target, command_pattern=command_pattern)
-        time.sleep(1)
-        return run_service_script(start_script)
+        restart_litellm()
+        return {"stdout": f"已重启 {service_name}", "stderr": ""}
     raise ValueError(f"不支持服务操作：{action}")
 
 
@@ -5347,6 +5616,25 @@ def api_health() -> dict[str, Any]:
     return {"ok": True, "name": "RelayDeck Local Admin"}
 
 
+@app.get("/api/service-status")
+def api_service_status() -> dict[str, Any]:
+    env_map = parse_env_file()
+    litellm_port, admin_port = get_ports(env_map)
+    claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
+    return {
+        "ports": {
+            "litellm": litellm_port,
+            "claude": claude_port,
+            "admin_panel": admin_port,
+        },
+        "service_status": {
+            "litellm": service_status(litellm_port, target=LITELLM_EXE, command_pattern="litellm"),
+            "claude": service_status(claude_port, target=PYTHON_EXE, command_pattern=CLAUDE_GATEWAY_COMMAND_PATTERN),
+            "admin_panel": service_status(admin_port, target=PYTHON_EXE, command_pattern=str(ADMIN_PANEL_DIR)),
+        },
+    }
+
+
 @app.post("/api/clients/claude-code/configure")
 def api_configure_claude_code() -> dict[str, Any]:
     env_map = parse_env_file()
@@ -5366,8 +5654,8 @@ def api_configure_claude_code() -> dict[str, Any]:
     return {"ok": True, **result, "restart_required": True}
 
 
-def client_integration_status() -> dict[str, Any]:
-    models = published_client_models(load_management_state())
+def client_integration_status(management_state: dict[str, Any] | None = None) -> dict[str, Any]:
+    models = published_client_models(management_state or load_management_state())
     paths = client_integration_paths()
 
     def configured(path: Path, marker: str) -> bool:
@@ -5378,12 +5666,22 @@ def client_integration_status() -> dict[str, Any]:
         except OSError:
             return False
 
+    def updated_at(*paths_to_check: Path) -> int:
+        timestamps: list[int] = []
+        for path in paths_to_check:
+            try:
+                if path.exists():
+                    timestamps.append(int(path.stat().st_mtime))
+            except OSError:
+                continue
+        return max(timestamps, default=0)
+
     return {
         "models": models,
         "clients": {
-            "codex": {"configured": configured(paths["codex_config"], "[model_providers.relaydeck]"), "config_path": str(paths["codex_config"]), "model_count": len(models)},
-            "opencode": {"configured": configured(paths["opencode_config"], '"relaydeck"'), "config_path": str(paths["opencode_config"]), "model_count": len(models)},
-            "claude_code": {"configured": configured(paths["claude_config"], "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"), "config_path": str(paths["claude_config"]), "model_count": len(models)},
+            "codex": {"configured": configured(paths["codex_config"], "[model_providers.relaydeck]"), "config_path": str(paths["codex_config"]), "config_updated_at": updated_at(paths["codex_config"], paths["codex_catalog"]), "model_count": len(models)},
+            "opencode": {"configured": configured(paths["opencode_config"], '"relaydeck"'), "config_path": str(paths["opencode_config"]), "config_updated_at": updated_at(paths["opencode_config"]), "model_count": len(models)},
+            "claude_code": {"configured": configured(paths["claude_config"], "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"), "config_path": str(paths["claude_config"]), "config_updated_at": updated_at(paths["claude_config"]), "model_count": len(models)},
         },
     }
 
@@ -5469,6 +5767,29 @@ def api_client_integrations() -> dict[str, Any]:
     return {"ok": True, **client_integration_status()}
 
 
+@app.get("/api/agent-integrations")
+def api_agent_integrations(force: bool = False) -> dict[str, Any]:
+    agents = agent_integration_registry_status(force_detection=force)
+    return {
+        "ok": True,
+        "agents": agents,
+        "total_count": len(agents),
+        "detected_count": sum(1 for agent in agents if agent["detected"]),
+        "full_integration_count": sum(
+            1 for agent in agents if agent["integration_level"] == "full"
+        ),
+    }
+
+
+@app.post("/api/agent-integrations/{agent_id}/activity")
+def api_record_agent_activity(agent_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        activity = record_agent_activity(agent_id, str(payload.get("event") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "agent_id": agent_id, "activity": activity}
+
+
 @app.post("/api/client-integrations/{client_name}/apply")
 def api_apply_client_integration(client_name: str) -> dict[str, Any]:
     env_map = parse_env_file()
@@ -5476,7 +5797,7 @@ def api_apply_client_integration(client_name: str) -> dict[str, Any]:
     if not gateway_key:
         raise HTTPException(status_code=400, detail="Missing LITELLM_MASTER_KEY")
     models = published_client_models(load_management_state())
-    litellm_port, _, _ = get_ports(env_map)
+    litellm_port, _ = get_ports(env_map)
     base_url = f"http://127.0.0.1:{litellm_port}/v1"
     paths = client_integration_paths()
     try:
@@ -5490,6 +5811,7 @@ def api_apply_client_integration(client_name: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="Unsupported client integration")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_agent_activity(client_name, "configured")
     return {"ok": True, "client": client_name, "restart_required": True, **result}
 
 
@@ -5497,7 +5819,7 @@ def api_apply_client_integration(client_name: str) -> dict[str, Any]:
 def api_codex_preview() -> dict[str, Any]:
     env_map = parse_env_file()
     models = published_client_models(load_management_state())
-    litellm_port, _, _ = get_ports(env_map)
+    litellm_port, _ = get_ports(env_map)
     paths = client_integration_paths()
     current = paths["codex_config"].read_text(encoding="utf-8") if paths["codex_config"].exists() else ""
     candidate = build_codex_config_content(current, paths["codex_catalog"], models, f"http://127.0.0.1:{litellm_port}/v1")
@@ -5510,7 +5832,13 @@ def api_codex_preview() -> dict[str, Any]:
             tofile="RelayDeck candidate",
         )
     )
-    return {"ok": True, "current": current, "candidate": candidate, "diff": diff}
+    return {
+        "ok": True,
+        "current": current,
+        "candidate": candidate,
+        "diff": diff,
+        "sync_summary": codex_sync_preview_summary(current, candidate),
+    }
 
 
 @app.post("/api/client-integrations/codex/apply-preview")
@@ -5522,6 +5850,7 @@ def api_apply_codex_preview(payload: dict[str, Any]) -> dict[str, Any]:
         result = apply_codex_config_candidate(paths["codex_config"], paths["codex_catalog"], candidate, models)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_agent_activity("codex", "configured")
     return {"ok": True, "client": "codex", "restart_required": True, **result}
 
 
@@ -5546,6 +5875,7 @@ def api_restore_codex_backup(backup_name: str) -> dict[str, Any]:
         result = restore_codex_config_backup(client_integration_paths()["codex_config"], backup_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_agent_activity("codex", "configured")
     return {"ok": True, **result}
 
 
@@ -5564,7 +5894,13 @@ def api_claude_code_preview() -> dict[str, Any]:
             tofile="RelayDeck candidate",
         )
     )
-    return {"ok": True, "current": _redact_claude_code_settings_for_preview(current), "candidate": candidate, "diff": diff}
+    return {
+        "ok": True,
+        "current": _redact_claude_code_settings_for_preview(current),
+        "candidate": candidate,
+        "diff": diff,
+        "sync_summary": claude_code_sync_preview_summary(current, candidate),
+    }
 
 
 def _redact_claude_code_settings_for_preview(content: str) -> str:
@@ -5578,6 +5914,32 @@ def _redact_claude_code_settings_for_preview(content: str) -> str:
     if isinstance(env, dict) and "ANTHROPIC_AUTH_TOKEN" in env:
         env["ANTHROPIC_AUTH_TOKEN"] = "<redacted>"
     return json.dumps(settings, ensure_ascii=False, indent=2) + "\n"
+
+
+def claude_code_sync_preview_summary(current: str, candidate: str) -> dict[str, str]:
+    """Describe Claude Code gateway changes without exposing ANTHROPIC_AUTH_TOKEN."""
+    def describe(content: str, *, fallback: str) -> tuple[str, str]:
+        try:
+            settings = _parse_claude_code_settings(content) if content.strip() else {"env": {}}
+        except ValueError:
+            return ("当前 settings.json 无法解析，请先检查原配置。", "因配置语法错误，无法识别认证设置。")
+        env = ensure_mapping(settings.get("env"))
+        base_url = str(env.get("ANTHROPIC_BASE_URL") or "").strip()
+        token = env.get("ANTHROPIC_AUTH_TOKEN")
+        route = f"Claude Code -> {base_url}" if base_url else f"Claude Code -> {fallback}"
+        credential = "ANTHROPIC_AUTH_TOKEN 已配置（值不显示）" if token else "未识别到 ANTHROPIC_AUTH_TOKEN"
+        return route, credential
+
+    current_route, current_credential = describe(current, fallback="Anthropic 默认入口")
+    next_route, next_credential = describe(candidate, fallback="RelayDeck Claude 网关")
+    return {
+        "current_route": current_route,
+        "next_route": next_route,
+        "current_credential": current_credential,
+        "next_credential": next_credential,
+        "preservation": "除 RelayDeck 管理的 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN、模型发现开关外，settings.json 其他字段保持不变；会移除会阻断网关模型发现的 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC。",
+        "recovery": "确认应用前会自动备份 settings.json；可在本窗口选择备份恢复。",
+    }
 
 
 @app.post("/api/client-integrations/claude-code/validate-preview")
@@ -5605,6 +5967,7 @@ def api_apply_claude_code_preview(payload: dict[str, Any]) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_agent_activity("claude-code", "configured")
     return {"ok": True, "client": "claude-code", "restart_required": True, **result}
 
 
@@ -5619,6 +5982,7 @@ def api_restore_claude_code_backup(backup_name: str) -> dict[str, Any]:
         result = restore_claude_code_settings_backup(client_integration_paths()["claude_config"], backup_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_agent_activity("claude-code", "configured")
     return {"ok": True, **result}
 
 
@@ -5959,7 +6323,8 @@ def api_state() -> dict[str, Any]:
     )
     router_settings = management_state.get("router_settings", {}) or {}
     litellm_settings = management_state.get("litellm_settings", {}) or {}
-    litellm_port, open_webui_port, admin_port = get_ports(env_map)
+    litellm_port, admin_port = get_ports(env_map)
+    claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
     return {
         "providers": providers,
         "routing_view_mode": management_state.get("routing_view_mode", "by_model"),
@@ -5975,13 +6340,13 @@ def api_state() -> dict[str, Any]:
         "usage_dashboard": usage_dashboard_snapshot(management_state),
         "ports": {
             "litellm": litellm_port,
-            "claude_litellm": int(env_map.get("CLAUDE_LITELLM_PORT", "4101")),
-            "open_webui": open_webui_port,
+            "claude": claude_port,
+            "claude_litellm": claude_port,
             "admin_panel": admin_port,
         },
         "service_status": {
             "litellm": service_status(litellm_port, target=LITELLM_EXE, command_pattern="litellm"),
-            "open_webui": service_status(open_webui_port, target=OPEN_WEBUI_EXE, command_pattern="open-webui"),
+            "claude": service_status(claude_port, target=PYTHON_EXE, command_pattern=CLAUDE_GATEWAY_COMMAND_PATTERN),
             "admin_panel": service_status(admin_port, target=PYTHON_EXE, command_pattern=str(ADMIN_PANEL_DIR)),
         },
     }
@@ -6518,7 +6883,7 @@ def api_test_direct(payload: DirectTestPayload) -> dict[str, Any]:
 @app.post("/api/test/gateway")
 def api_test_gateway(payload: GatewayTestPayload) -> dict[str, Any]:
     env_map = parse_env_file()
-    litellm_port, _, _ = get_ports(env_map)
+    litellm_port, _ = get_ports(env_map)
     master = env_map.get("LITELLM_MASTER_KEY", "")
     headers = {"Authorization": f"Bearer {master}", "Content-Type": "application/json"}
     body = {
@@ -6580,7 +6945,7 @@ def api_test_gateway(payload: GatewayTestPayload) -> dict[str, Any]:
 @app.get("/api/models")
 def api_models() -> dict[str, Any]:
     env_map = parse_env_file()
-    litellm_port, _, _ = get_ports(env_map)
+    litellm_port, _ = get_ports(env_map)
     master = env_map.get("LITELLM_MASTER_KEY", "")
     headers = {"Authorization": f"Bearer {master}"}
     try:
@@ -6594,7 +6959,7 @@ def api_models() -> dict[str, Any]:
 def client_gateway_models() -> dict[str, Any]:
     """Read the two local gateway discovery endpoints without exposing credentials."""
     env_map = parse_env_file()
-    litellm_port, _, _ = get_ports(env_map)
+    litellm_port, _ = get_ports(env_map)
     claude_port = int(env_map.get("CLAUDE_LITELLM_PORT", "4101"))
     headers = {"Authorization": f"Bearer {env_map.get('LITELLM_MASTER_KEY', '')}"}
 
@@ -6713,7 +7078,7 @@ def api_import_ccswitch() -> dict[str, Any]:
     save_gateway_configs(configs)
     restart_litellm()
 
-    litellm_port, open_webui_port, admin_port = get_ports(env_map)
+    litellm_port, admin_port = get_ports(env_map)
     return {
         "ok": True,
         "imported_count": len(imported),
@@ -6721,7 +7086,6 @@ def api_import_ccswitch() -> dict[str, Any]:
         "added": added,
         "ports": {
             "litellm": litellm_port,
-            "open_webui": open_webui_port,
             "admin_panel": admin_port,
         },
     }

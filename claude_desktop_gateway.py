@@ -19,6 +19,7 @@ DEFAULT_INTERNAL_PORT = 4102
 VALID_TIERS = frozenset({"opus", "sonnet", "haiku", "fable"})
 ROOT = Path(__file__).resolve().parent
 CLIENT_SHORTCUTS_PATH = ROOT / "config" / "client-shortcuts.json"
+MANAGEMENT_STATE_PATH = ROOT / "config" / "relaydeck-state.json"
 LEGACY_CLAUDE_SHORTCUT_TIERS = {
     "claude-haiku": "haiku",
     "claude-sonnet": "sonnet",
@@ -111,12 +112,39 @@ def load_claude_shortcuts() -> list[dict[str, str]]:
     return rows
 
 
+def load_published_public_models() -> list[str]:
+    """Load the published public model names configured for the local gateway."""
+    try:
+        payload = json.loads(MANAGEMENT_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    models: list[str] = []
+    seen: set[str] = set()
+    for route in payload.get("model_routes", []):
+        if not isinstance(route, dict):
+            continue
+        if not bool(route.get("gateway_enabled")) or not bool(route.get("enabled", True)):
+            continue
+        name = str(route.get("public_model_name") or route.get("model_name") or "").strip()
+        normalized = name.casefold()
+        if not name or normalized in seen:
+            continue
+        seen.add(normalized)
+        models.append(name)
+    return models
+
+
 def shortcut_target_alias(model: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", model.strip().lower()).strip("-") or "relay"
     return f"claude-haiku-relaydeck-{slug}"
 
 
-def rewrite_shortcut_model(model: str, slots: Iterable[dict[str, str]]) -> str:
+def rewrite_shortcut_model(
+    model: str,
+    slots: Iterable[dict[str, str]],
+    published_models: Iterable[str] = (),
+) -> str:
     """Translate an exact alias, or an unambiguous Claude family, to a RelayDeck route."""
     normalized_model = model.strip().casefold()
     configured_slots = list(slots)
@@ -124,6 +152,10 @@ def rewrite_shortcut_model(model: str, slots: Iterable[dict[str, str]]) -> str:
         name = str(slot.get("name") or "").strip()
         if name.casefold() == normalized_model and (target := str(slot.get("target") or "").strip()):
             return shortcut_target_alias(target)
+
+    for public_model_name in published_models:
+        if str(public_model_name).strip().casefold() == normalized_model:
+            return shortcut_target_alias(str(public_model_name))
 
     # Claude Code's built-in picker submits canonical ids such as ``claude-opus-5``.
     # A user-facing alias such as ``Opus`` should still work when its family has one target.
@@ -139,18 +171,43 @@ def rewrite_shortcut_model(model: str, slots: Iterable[dict[str, str]]) -> str:
     return model
 
 
-def build_shortcut_model_discovery_response(slots: Iterable[dict[str, str]]) -> dict[str, Any]:
-    """Expose configured Claude Code aliases without leaking internal LiteLLM aliases."""
-    models = [
-        {
-            "type": "model",
-            "id": slot["name"],
-            "display_name": f"{slot['name']} -> {slot['target']}",
-            "anthropic_family_tier": slot["tier"],
-        }
-        for slot in slots
-        if slot.get("target")
-    ]
+def build_shortcut_model_discovery_response(
+    slots: Iterable[dict[str, str]],
+    published_models: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Expose configured slots and every published RelayDeck model to Claude Code."""
+    models: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for public_model_name in published_models:
+        name = str(public_model_name).strip()
+        normalized = name.casefold()
+        if not name or normalized in seen_ids:
+            continue
+        seen_ids.add(normalized)
+        models.append(
+            {
+                "type": "model",
+                "id": name,
+                "display_name": name,
+                "anthropic_family_tier": infer_shortcut_tier(name),
+            }
+        )
+
+    for slot in slots:
+        name = str(slot.get("name") or "").strip()
+        target = str(slot.get("target") or "").strip()
+        normalized = name.casefold()
+        if not name or not target or normalized in seen_ids:
+            continue
+        seen_ids.add(normalized)
+        models.append(
+            {
+                "type": "model",
+                "id": name,
+                "display_name": f"{name} -> {target}",
+                "anthropic_family_tier": str(slot.get("tier") or infer_shortcut_tier(name)),
+            }
+        )
     return {
         "data": models,
         "has_more": False,
@@ -186,7 +243,11 @@ async def request_upstream(request: Request, *, stream: bool) -> tuple[httpx.Res
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict) and isinstance(payload.get("model"), str):
-            payload["model"] = rewrite_shortcut_model(payload["model"], load_claude_shortcuts())
+            payload["model"] = rewrite_shortcut_model(
+                payload["model"],
+                load_claude_shortcuts(),
+                load_published_public_models(),
+            )
             body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
     client = httpx.AsyncClient(timeout=None, follow_redirects=False)
@@ -203,8 +264,9 @@ async def request_upstream(request: Request, *, stream: bool) -> tuple[httpx.Res
 @app.get("/v1/models")
 async def desktop_model_discovery(request: Request) -> Response:
     shortcuts = load_claude_shortcuts()
-    if shortcuts:
-        return JSONResponse(build_shortcut_model_discovery_response(shortcuts))
+    published_models = load_published_public_models()
+    if shortcuts or published_models:
+        return JSONResponse(build_shortcut_model_discovery_response(shortcuts, published_models))
 
     upstream, client = await request_upstream(request, stream=False)
     try:

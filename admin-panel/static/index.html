@@ -135,12 +135,6 @@
       line-height: 1.7;
     }
 
-    .status-grid {
-      display: grid;
-      gap: 12px;
-    }
-
-    .status-chip,
     .mini-panel {
       background: var(--surface);
       border: 1px solid var(--line);
@@ -148,7 +142,6 @@
       padding: 14px;
     }
 
-    .status-chip strong,
     .mini-panel strong {
       display: block;
       font-size: 11px;
@@ -158,11 +151,35 @@
       text-transform: uppercase;
     }
 
-    .status-chip span,
     .mini-panel span {
       font-size: 14px;
       line-height: 1.6;
     }
+
+    .service-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .service-state::before {
+      content: '';
+      width: 9px;
+      height: 9px;
+      flex: 0 0 9px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+    }
+
+    .service-state-ok { color: #8df4ba; }
+    .service-state-ok::before { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15), 0 0 12px rgba(34, 197, 94, 0.45); }
+    .service-state-fail { color: #ff9b9b; }
+    .service-state-fail::before { background: #fb5d66; box-shadow: 0 0 0 3px rgba(251, 93, 102, 0.14), 0 0 12px rgba(251, 93, 102, 0.35); }
+    .service-state-checking { color: var(--muted); }
+    .service-state-checking::before { background: var(--muted); box-shadow: 0 0 0 3px rgba(156, 169, 162, 0.12); }
+    .service-state-port { color: var(--muted); font-size: 12px; font-weight: 500; }
 
     .service-actions {
       display: flex;
@@ -178,30 +195,71 @@
       font-size: 11px;
     }
 
-    .service-info-button {
-      width: 100%;
-      margin-top: 8px;
-      padding: 7px 9px;
+    .service-dialog {
+      width: min(620px, 100%);
+    }
+
+    .service-dialog-summary {
+      display: grid;
+      gap: 16px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--relaydeck-radius-md);
+      background: var(--surface);
+    }
+
+    .service-dialog-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .gateway-service-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .gateway-service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--relaydeck-radius-md);
+      background: color-mix(in srgb, var(--surface) 84%, transparent);
+    }
+
+    .gateway-service-row-copy {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .gateway-service-row-copy strong {
+      font-size: 13px;
+    }
+
+    .gateway-service-row-copy small {
+      color: var(--muted);
       font-size: 11px;
     }
 
-    .service-info-row {
+    .gateway-service-row .service-state {
+      flex: 0 0 auto;
+      text-align: right;
+    }
+
+    .service-dialog-actions {
       display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 8px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
-    .service-info-row .help-icon {
-      flex: 0 0 30px;
-      width: 30px;
-      height: 30px;
-      cursor: help;
-    }
-
-    .service-info-row .service-info-button {
-      width: auto;
-      margin-top: 0;
+    .service-dialog-actions button {
+      flex: 1 1 140px;
     }
 
     .sidebar-links {
@@ -209,7 +267,11 @@
       gap: 10px;
     }
 
-    .sidebar-links a {
+    .sidebar-links a,
+    .sidebar-links button {
+      appearance: none;
+      width: 100%;
+      display: block;
       color: #d8f8ff;
       text-decoration: none;
       border: 1px solid rgba(84, 209, 255, 0.18);
@@ -217,6 +279,10 @@
       padding: 10px 12px;
       border-radius: 12px;
       cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1.4;
+      text-align: left;
     }
 
     .overlay {
@@ -452,55 +518,120 @@
       overflow-wrap: anywhere;
     }
 
-    .client-integration-grid {
+    .agent-integration-section {
+      margin: 16px 0;
+    }
+
+    .agent-integration-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .agent-integration-list {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin: 14px 0;
+      gap: 7px;
+      margin-top: 12px;
     }
 
-    .client-integration-card {
+    .agent-integration-row {
+      display: grid;
+      grid-template-columns: 38px minmax(150px, 0.95fr) minmax(220px, 1.35fr) auto;
+      align-items: center;
+      gap: 12px;
       min-width: 0;
-      padding: 12px;
-      border: 1px solid rgba(116, 202, 255, 0.24);
-      border-radius: 6px;
-      background: rgba(8, 29, 47, 0.55);
+      padding: 10px 12px;
+      border: 1px solid rgba(116, 202, 255, 0.16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.025);
     }
 
-    .client-integration-title {
+    .agent-integration-identity,
+    .agent-integration-detail {
+      min-width: 0;
+    }
+
+    .agent-integration-title-row {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
-      font-weight: 700;
     }
 
-    .client-app-icon {
+    .agent-app-icon {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      border: 1px solid rgba(157, 228, 255, 0.55);
-      background: rgba(20, 73, 104, 0.7);
+      width: 38px;
+      height: 38px;
+      border-radius: 9px;
+      border: 1px solid rgba(157, 228, 255, 0.28);
+      background: rgba(20, 73, 104, 0.5);
+      overflow: hidden;
       color: #eafaff;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 10px;
+      font-size: 14px;
       font-weight: 800;
     }
 
-    .client-app-icon img {
+    .agent-app-icon img {
       display: block;
-      width: 16px;
-      height: 16px;
+      width: 24px;
+      height: 24px;
       object-fit: contain;
+    }
+
+    .agent-app-icon.client-icon img {
       filter: invert(1);
     }
 
-    .client-integration-card .helper-text {
-      min-height: 36px;
-      margin: 9px 0;
+    .agent-integration-command {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
       overflow-wrap: anywhere;
+    }
+
+    .agent-integration-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .agent-integration-badge {
+      flex: 0 0 auto;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .agent-integration-badge.online {
+      border-color: rgba(125, 255, 182, 0.46);
+      color: var(--ok);
+    }
+
+    .agent-integration-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .agent-integration-actions .secondary,
+    .agent-integration-actions .link-button {
+      min-height: 32px;
+      padding: 6px 9px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .agent-integration-actions .link-button {
+      color: var(--accent);
+      text-decoration: none;
     }
 
     @media (max-width: 720px) {
@@ -508,8 +639,22 @@
         grid-template-columns: 1fr;
       }
 
-      .client-integration-grid {
+      .agent-integration-head {
+        flex-direction: column;
+      }
+
+      .agent-integration-row {
         grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .agent-app-icon {
+        width: 34px;
+        height: 34px;
+      }
+
+      .agent-integration-actions {
+        justify-content: flex-start;
       }
     }
 
@@ -555,6 +700,10 @@
     .config-diff-line.deletion { color: #ff9d9d; background: rgba(255, 122, 122, 0.08); }
     .config-diff-line.location,
     .config-diff-line.header { color: #8ed8ff; }
+    .sync-route-summary { display: grid; gap: 8px; }
+    .sync-route-summary-row { display: grid; grid-template-columns: 106px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; line-height: 1.5; }
+    .sync-route-summary-row strong { color: var(--text); font-weight: 650; }
+    .sync-route-summary-row span { color: var(--muted); overflow-wrap: anywhere; }
 
     .main {
       display: grid;
@@ -1696,6 +1845,189 @@
       gap: 10px;
     }
 
+    .auto-refresh-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 38px;
+      padding: 5px 10px 5px 12px;
+      border: 1px solid rgba(84, 209, 255, 0.16);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.035);
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .auto-refresh-toggle:hover {
+      border-color: rgba(125, 255, 182, 0.34);
+      background: rgba(125, 255, 182, 0.06);
+    }
+
+    .auto-refresh-toggle:focus-within {
+      border-color: rgba(84, 209, 255, 0.42);
+      box-shadow: 0 0 0 3px rgba(84, 209, 255, 0.12);
+    }
+
+    .auto-refresh-toggle > span {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .auto-refresh-checkbox {
+      appearance: none;
+      -webkit-appearance: none;
+      position: relative;
+      width: 44px;
+      height: 26px;
+      min-width: 44px;
+      min-height: 26px;
+      flex: 0 0 44px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid rgba(216, 248, 255, 0.28);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .auto-refresh-checkbox::before {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #d8e7e9;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+
+    .auto-refresh-checkbox:checked {
+      border-color: rgba(125, 255, 182, 0.68);
+      background: var(--accent);
+    }
+
+    .auto-refresh-checkbox:checked::before {
+      transform: translateX(18px);
+      background: #123326;
+    }
+
+    .auto-refresh-checkbox:focus {
+      outline: none;
+    }
+
+    .auto-refresh-checkbox:focus-visible {
+      box-shadow: 0 0 0 3px rgba(84, 209, 255, 0.24);
+    }
+
+    .auto-refresh-status {
+      min-height: 28px;
+      padding: 4px 10px;
+      font-size: 11px;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .auto-refresh-status[data-state="on"] {
+      color: #052415;
+      background: var(--accent);
+    }
+
+    .auto-refresh-status[data-state="off"] {
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .route-enabled-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      width: 100%;
+      min-height: 54px;
+      padding: 12px 14px;
+      border: 1px solid rgba(84, 209, 255, 0.14);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.025);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .route-enabled-toggle:hover {
+      border-color: rgba(125, 255, 182, 0.32);
+      background: rgba(125, 255, 182, 0.045);
+    }
+
+    .route-enabled-toggle:focus-within {
+      border-color: rgba(84, 209, 255, 0.42);
+      box-shadow: 0 0 0 3px rgba(84, 209, 255, 0.12);
+    }
+
+    .route-enabled-toggle > span {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .route-enabled-checkbox {
+      appearance: none;
+      -webkit-appearance: none;
+      position: relative;
+      width: 44px;
+      height: 26px;
+      min-width: 44px;
+      min-height: 26px;
+      flex: 0 0 44px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid rgba(216, 248, 255, 0.28);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .route-enabled-checkbox::before {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #d8e7e9;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+
+    .route-enabled-checkbox:checked {
+      border-color: rgba(125, 255, 182, 0.68);
+      background: var(--accent);
+    }
+
+    .route-enabled-checkbox:checked::before {
+      transform: translateX(18px);
+      background: #123326;
+    }
+
+    .route-enabled-checkbox:focus {
+      outline: none;
+    }
+
+    .route-enabled-checkbox:focus-visible {
+      box-shadow: 0 0 0 3px rgba(84, 209, 255, 0.24);
+    }
+
+    .route-enabled-checkbox:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
     .footer-note {
       color: var(--muted);
       font-size: 12px;
@@ -1912,6 +2244,175 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
+    /* RelayDeck visual polish: keep the existing navigation and behavior intact. */
+    :root {
+      --relaydeck-radius-sm: 12px;
+      --relaydeck-radius-md: 18px;
+      --relaydeck-radius-lg: 24px;
+      --relaydeck-shadow-soft: 0 14px 40px rgba(0, 0, 0, 0.16);
+      --relaydeck-shadow-hover: 0 18px 48px rgba(0, 0, 0, 0.24);
+    }
+
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+      background:
+        radial-gradient(circle at 85% 0%, rgba(125, 255, 182, 0.06), transparent 32%),
+        var(--bg);
+    }
+
+    .shell {
+      width: min(1560px, calc(100vw - 48px));
+      margin: 24px auto;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 22px;
+    }
+
+    .card {
+      border-radius: var(--relaydeck-radius-lg);
+      box-shadow: var(--relaydeck-shadow-soft);
+      transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    }
+
+    .sidebar {
+      padding: 24px 20px;
+      top: 24px;
+      max-height: calc(100vh - 48px);
+      gap: 20px;
+      background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 92%, var(--accent) 8%));
+    }
+
+    .brand {
+      padding: 8px 8px 22px;
+    }
+
+    .brand h1 {
+      font-size: 20px;
+      letter-spacing: .08em;
+    }
+
+    .mini-panel {
+      border-radius: var(--relaydeck-radius-md);
+      padding: 16px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+    }
+
+    .sidebar-links {
+      gap: 8px;
+    }
+
+    .sidebar-links a,
+    .sidebar-links button {
+      border-radius: var(--relaydeck-radius-md);
+      padding: 12px 14px;
+      transition: background .18s ease, border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+    }
+
+    .sidebar-links a:hover,
+    .sidebar-links button:hover {
+      transform: translateX(2px);
+      border-color: color-mix(in srgb, var(--accent-2) 50%, var(--line));
+      box-shadow: 0 8px 22px rgba(0, 0, 0, .16);
+    }
+
+    .dialog,
+    .overlay .card {
+      border-radius: var(--relaydeck-radius-lg);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
+    }
+
+    .dialog-close,
+    .appearance-theme-option,
+    input,
+    select,
+    textarea,
+    button,
+    .secondary,
+    .primary,
+    .danger {
+      border-radius: var(--relaydeck-radius-sm);
+    }
+
+    input,
+    select,
+    textarea {
+      min-height: 40px;
+      padding: 9px 12px;
+      transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 20%, transparent);
+    }
+
+    button,
+    .secondary,
+    .primary,
+    .danger {
+      min-height: 38px;
+      padding: 9px 14px;
+      transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
+    }
+
+    button:hover:not(:disabled),
+    .secondary:hover:not(:disabled),
+    .primary:hover:not(:disabled),
+    .danger:hover:not(:disabled) {
+      transform: translateY(-1px);
+      filter: brightness(1.06);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, .16);
+    }
+
+    .provider-card,
+    .binding-card,
+    .api-card,
+    .supplier-meta-card,
+    .supplier-quota-card,
+    .supplier-recharge-card,
+    .fold-card,
+    .metric-card,
+    .usage-provider-card {
+      border-radius: var(--relaydeck-radius-md);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, .11);
+    }
+
+    .provider-card:hover,
+    .api-card:hover,
+    .binding-card:hover,
+    .fold-card:hover {
+      box-shadow: var(--relaydeck-shadow-hover);
+    }
+
+    .pill,
+    .status-light,
+    .family-chip {
+      border-radius: 999px;
+    }
+
+    .empty-state {
+      border-radius: var(--relaydeck-radius-lg);
+      padding: 54px 24px;
+      background: color-mix(in srgb, var(--surface) 86%, transparent);
+      border: 1px dashed var(--line);
+    }
+
+    @media (max-width: 900px) {
+      .shell {
+        width: min(100% - 24px, 720px);
+        margin: 12px auto;
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .sidebar {
+        position: static;
+        max-height: none;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1919,32 +2420,12 @@
     <aside class="card sidebar">
       <div class="brand">
         <h1>RelayDeck Local</h1>
-        <div class="sub">本地自托管模型路由台，围绕 LiteLLM、Open WebUI 和管理页，把路由、密钥、日志、测试与启停动作收在同一个地方。</div>
-      </div>
-
-      <div class="status-grid">
-        <div class="status-chip" title="管理页就是你现在看到的这个后台，用来配置模型路由、供应商、额度监控和测试工具。绿色表示服务正在运行。">
-          <strong>管理页</strong>
-          <span id="status-admin">读取中...</span>
-        </div>
-        <div class="status-chip" title="LiteLLM 网关是模型转发中间层。它会按照你在本项目里配置的路由规则，把请求转发到不同供应商。">
-          <strong>LiteLLM 网关</strong>
-          <span id="status-litellm">读取中...</span>
-          <div class="service-actions" id="service-actions-litellm"></div>
-          <div class="service-info-row">
-            <button class="secondary service-info-button" id="btn-show-litellm-connection-info" type="button" title="配置 Codex、OpenCode 和 Claude Code"><span class="client-app-icon"><img src="/static/assets/client-icons/codex.svg" alt="Codex"></span><span class="client-app-icon"><img src="/static/assets/client-icons/opencode.svg" alt="OpenCode"></span><span class="client-app-icon"><img src="/static/assets/client-icons/claude-code.svg" alt="Claude Code"></span> 客户端集成</button>
-            <button class="help-icon" id="btn-show-litellm-connection-help" type="button" title="用于配置 Codex、OpenCode 和 Claude Code。" aria-label="客户端集成说明">?</button>
-          </div>
-        </div>
-        <div class="status-chip" title="Open WebUI 是聊天前台界面，适合像 ChatGPT 那样直接聊天使用。它本身不负责路由，而是调用 LiteLLM。">
-          <strong>Open WebUI</strong>
-          <span id="status-webui">读取中...</span>
-          <div class="service-actions" id="service-actions-open-webui"></div>
-          <button class="secondary service-info-button" id="btn-open-webui" type="button">打开聊天前台</button>
-        </div>
+        <div class="sub">本地自托管模型路由台，围绕 LiteLLM、Claude 网关和管理页，把路由、密钥、日志、测试与启停动作收在同一个地方。</div>
       </div>
 
       <div class="sidebar-links">
+        <button class="sidebar-link" type="button" data-service-dialog="gateway" aria-haspopup="dialog" title="查看本地网关状态">网关状态</button>
+        <button class="sidebar-link" id="btn-show-litellm-connection-info" type="button" aria-haspopup="dialog" title="配置到对应 Agent 应用中">配置到对应 Agent 应用中</button>
         <a id="btn-show-cost-analysis" title="打开按实际支出和真实使用记录生成的模型性价比排行。">性价比分析</a>
         <a id="btn-show-quota-info" title="打开供应商额度统计窗口，查看已用比例、剩余额度和最近刷新时间。">查看余额额度</a>
         <a href="#routing-section" title="跳到当前页面里的模型路由配置区域，用来按模型或按供应商维护转发规则。">模型路由配置</a>
@@ -1956,7 +2437,7 @@
     <main class="main">
       <section class="card hero">
         <h2>Model Routing Desk</h2>
-        <p>这里不是通用 Swagger，也不是聊天页。它服务于你的本地模型网关运维：编辑模型别名、管理环境变量、校验上游 relay，并对 LiteLLM、Open WebUI 与管理页执行受控启停。</p>
+        <p>这里不是通用 Swagger，也不是聊天页。它服务于你的本地模型网关运维：编辑模型别名、管理环境变量、校验上游 relay，并对 LiteLLM 与 Claude 网关执行受控启停。</p>
         <div class="toolbar">
           <button class="primary" id="btn-refresh">刷新状态</button>
           <button class="primary" id="btn-save">保存并应用</button>
@@ -2076,10 +2557,6 @@
             <label>搜索模型</label>
             <input id="model-route-search" placeholder="输入模型名、上游模型、供应商名">
           </div>
-          <label class="toggle-inline">
-            <span>只看置顶</span>
-            <input id="model-route-pinned-only" type="checkbox">
-          </label>
           <div class="family-tools">
             <div class="family-create">
               <input id="model-family-name" placeholder="新增模型家族，例如：GPT 系列 / Claude 系列 / GLM 系列">
@@ -2093,7 +2570,7 @@
       </section>
 
       <div class="footer-note">
-        `保存并应用` 会重写 `litellm.yaml`、更新 `relaydeck-state.json` 与 `.env`，然后受控重启 LiteLLM。端口、主密钥或 WebUI Secret 变更后，建议再执行一次 `重启全部`，确保前台与管理页都读到新配置。
+        `保存并应用` 会重写 `litellm.yaml`、更新 `relaydeck-state.json` 与 `.env`，然后受控重启 LiteLLM。端口、主密钥或网关密钥变更后，建议再执行一次 `重启全部`，确保管理页和客户端都读到新配置。
       </div>
     </main>
   </div>
@@ -2101,37 +2578,51 @@
     <div class="floating-action-notice-message" id="floating-action-notice-message"></div>
     <button class="floating-action-notice-close" id="btn-close-floating-action-notice" type="button" aria-label="关闭提示">×</button>
   </div>
+  <div class="overlay" id="service-management-overlay" data-open="false">
+    <div class="dialog service-dialog" role="dialog" aria-modal="true" aria-labelledby="service-management-title">
+      <div class="dialog-head">
+        <div>
+          <h3 id="service-management-title">网关状态</h3>
+          <div class="helper-text">查看本地网关的运行状态、端口和控制动作。</div>
+        </div>
+        <button class="dialog-close" id="btn-close-service-management" type="button">关闭</button>
+      </div>
+      <div class="service-dialog-summary">
+        <div id="service-management-status"></div>
+        <div class="gateway-service-list" id="service-management-services"></div>
+        <div class="service-dialog-meta"><span id="service-management-description"></span></div>
+        <div class="service-dialog-actions" id="service-management-actions"></div>
+      </div>
+    </div>
+  </div>
   <div class="overlay" id="litellm-models-overlay" data-open="false">
     <div class="dialog api-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="litellm-models-title">
       <div class="dialog-head">
         <div>
           <div class="dialog-title-row">
-            <h3 id="litellm-models-title">客户端集成与同步</h3>
+            <h3 id="litellm-models-title">配置到对应 Agent 应用中</h3>
             <button class="help-icon" id="btn-show-litellm-client-help" type="button" title="查看两个客户端网关的区别" aria-label="查看客户端网关说明">?</button>
           </div>
           <div class="helper-text">仅同步已发布模型。写入前会备份原配置，RelayDeck 不会覆盖其他客户端供应商。</div>
         </div>
         <button class="dialog-close" id="btn-close-litellm-models-overlay" type="button">关闭</button>
       </div>
-      <div class="client-integration-grid" id="client-integration-grid">
-        <section class="client-integration-card">
-          <div class="client-integration-title"><span class="client-app-icon"><img src="/static/assets/client-icons/codex.svg" alt=""></span>Codex</div>
-          <div class="helper-text" id="client-integration-codex-status">正在检查配置…</div>
-          <button class="secondary" type="button" data-client-integration="codex">同步 Codex</button>
-          <button class="secondary" type="button" data-client-shortcut-client="codex">模型对应映射</button>
-        </section>
-        <section class="client-integration-card">
-          <div class="client-integration-title"><span class="client-app-icon"><img src="/static/assets/client-icons/opencode.svg" alt=""></span>OpenCode</div>
-          <div class="helper-text" id="client-integration-opencode-status">正在检查配置…</div>
-          <button class="secondary" type="button" data-client-integration="opencode">同步 OpenCode</button>
-        </section>
-        <section class="client-integration-card">
-          <div class="client-integration-title"><span class="client-app-icon"><img src="/static/assets/client-icons/claude-code.svg" alt=""></span>Claude Code</div>
-          <div class="helper-text" id="client-integration-claude-code-status">正在检查配置…</div>
-          <button class="secondary" type="button" data-client-integration="claude-code">同步 Claude Code</button>
-          <button class="secondary" type="button" data-client-shortcut-client="claude_code">模型对应映射</button>
-        </section>
+      <div class="kv-block">
+        <label>当前已发布公共模型</label>
+        <div class="helper-text" id="published-public-models-status">打开时正在读取 RelayDeck 发布状态。模型对应映射仅在各 Agent 的专属配置中生效。</div>
+        <div class="provider-actions"><button class="secondary" id="btn-refresh-published-public-models" type="button">刷新公共模型</button></div>
+        <div class="helper-text client-gateway-model-list" id="published-public-model-list">加载中…</div>
       </div>
+      <section class="agent-integration-section" aria-labelledby="agent-registry-title">
+        <div class="agent-integration-head">
+          <div>
+            <h4 id="agent-registry-title">Agent 应用列表</h4>
+            <div class="helper-text" id="agent-registry-status">正在检查本机 Agent 命令…</div>
+          </div>
+          <button class="secondary" id="btn-refresh-agent-registry" type="button">刷新 Agent 检测</button>
+        </div>
+        <div class="agent-integration-list" id="agent-registry-list" aria-live="polite"></div>
+      </section>
       <div class="kv-block">
         <label>Codex / OpenAI 兼容客户端</label>
         <div class="helper-text">使用原生公共模型名，连接端口为 4100。</div>
@@ -2182,15 +2673,6 @@
         </div>
       </div>
       <div class="kv-block">
-        <label>当前网关可发现模型</label>
-        <div class="helper-text" id="client-gateway-models-status">打开时正在读取本地网关。</div>
-        <div class="provider-actions"><button class="secondary" id="btn-refresh-client-gateway-models" type="button">刷新模型列表</button></div>
-        <div class="client-gateway-url-grid">
-          <div><strong>Codex / OpenAI（4100）</strong><div class="helper-text client-gateway-model-list" id="client-openai-model-list">加载中…</div></div>
-          <div><strong>Claude Code（4101）</strong><div class="helper-text client-gateway-model-list" id="client-claude-model-list">加载中…</div></div>
-        </div>
-      </div>
-      <div class="kv-block">
         <label>curl 示例</label>
         <textarea id="litellm-models-curl" readonly></textarea>
         <div class="provider-actions">
@@ -2203,6 +2685,7 @@
   <div class="overlay" id="codex-sync-preview-overlay" data-open="false">
     <div class="dialog utility-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-sync-preview-title">
       <div class="dialog-head"><div><h3 id="codex-sync-preview-title">同步 Codex 配置预览</h3><div class="helper-text">此窗口不会写入文件。请检查候选内容，确认后才会创建备份并应用。</div></div><button class="dialog-close" id="btn-close-codex-sync-preview" type="button">关闭</button></div>
+      <div class="kv-block"><label>同步影响说明</label><div class="sync-route-summary" id="codex-sync-summary" aria-live="polite"></div></div>
       <div class="client-gateway-url-grid"><label>当前 config.toml<textarea id="codex-sync-current" readonly rows="12"></textarea></label><label>RelayDeck 候选配置（可修改）<textarea id="codex-sync-candidate" rows="12"></textarea></label></div>
       <div class="kv-block"><label>变更摘要</label><pre class="config-diff" id="codex-sync-diff" tabindex="0" aria-label="Codex 配置变更摘要"></pre></div>
       <div class="kv-block"><label>可恢复备份</label><div class="helper-text" id="codex-sync-backup-summary">会保留历史备份；本次新建的备份会单独标记。</div><select id="codex-sync-backups"><option value="">加载中…</option></select><div class="provider-actions"><button class="secondary" id="btn-refresh-codex-backups" type="button">刷新备份</button><button class="secondary" id="btn-restore-codex-backup" type="button">恢复选中备份</button></div></div>
@@ -2213,6 +2696,7 @@
   <div class="overlay" id="claude-sync-preview-overlay" data-open="false">
     <div class="dialog utility-dialog" role="dialog" aria-modal="true" aria-labelledby="claude-sync-preview-title">
       <div class="dialog-head"><div><h3 id="claude-sync-preview-title">同步 Claude Code 配置预览</h3><div class="helper-text">此窗口不会写入文件。认证令牌不会显示，确认应用时由 RelayDeck 安全写入。</div></div><button class="dialog-close" id="btn-close-claude-sync-preview" type="button">关闭</button></div>
+      <div class="kv-block"><label>同步影响说明</label><div class="sync-route-summary" id="claude-sync-summary" aria-live="polite"></div></div>
       <div class="client-gateway-url-grid"><label>当前 settings.json<textarea id="claude-sync-current" readonly rows="12"></textarea></label><label>RelayDeck 候选配置（可修改）<textarea id="claude-sync-candidate" rows="12"></textarea></label></div>
       <div class="kv-block"><label>变更摘要</label><pre class="config-diff" id="claude-sync-diff" tabindex="0" aria-label="Claude Code 配置变更摘要"></pre></div>
       <div class="kv-block"><label>可恢复备份</label><div class="helper-text" id="claude-sync-backup-summary">会保留历史备份；本次新建的备份会单独标记。</div><select id="claude-sync-backups"><option value="">加载中…</option></select><div class="provider-actions"><button class="secondary" id="btn-refresh-claude-backups" type="button">刷新备份</button><button class="secondary" id="btn-restore-claude-backup" type="button">恢复选中备份</button></div></div>
@@ -2230,7 +2714,7 @@
         <button class="dialog-close" id="btn-close-litellm-connection-help" type="button">关闭</button>
       </div>
       <div class="helper-text">
-        <p><strong>Codex / OpenAI 客户端</strong>：使用 4100 端口和原生公共模型名称。适用于 Codex、Open WebUI 以及其他 OpenAI 兼容客户端。</p>
+        <p><strong>Codex / OpenAI 客户端</strong>：使用 4100 端口和原生公共模型名称。适用于 Codex、OpenCode 以及其他 OpenAI 兼容客户端。</p>
         <p><strong>Claude Code</strong>：使用 4101 端口和专用模型别名。点击“配置 Claude Code 自动发现”后，RelayDeck 会写入 Claude Code 的用户配置，并启用模型发现。</p>
         <p><strong>两套网关的关系</strong>：端口和模型名称不同，但底层共享同一批供应商、优先级、额度状态和自动故障转移规则。</p>
         <p><strong>配置完成后</strong>：完全退出并重新启动 Claude Code，再使用 <code>/model</code> 选择当前已发布的模型。</p>
@@ -2311,7 +2795,6 @@
         <button class="secondary" id="btn-test-direct">直连上游</button>
         <button class="secondary" id="btn-list-models">读取 /models</button>
         <button class="secondary" id="btn-log-litellm">LiteLLM 日志</button>
-        <button class="secondary" id="btn-log-openwebui">Open WebUI 日志</button>
         <button class="secondary" id="btn-log-admin">管理页日志</button>
       </div>
       <div class="result">
@@ -2430,6 +2913,7 @@
       supplierQuotas: {},
       modelRoutes: [],
       routeBindings: [],
+      bindingIndexes: { byRouteId: new Map(), byApiProfileId: new Map() },
       env: {},
       router_settings: {},
       litellm_settings: {},
@@ -2439,6 +2923,7 @@
       selectedBindingId: '',
       ports: {},
       lastServiceStatus: {},
+      serviceDialogService: '',
       apiProfileStatuses: {},
       bindingNetworkStatuses: {},
       bindingDialogStatuses: {},
@@ -2469,7 +2954,6 @@
       modelRoutePinnedIds: readPinnedModelRoutesPreference(),
       pendingScrollRouteId: '',
       modelFamilyPinnedNames: readPinnedModelFamiliesPreference(),
-      modelRoutePinnedOnly: false,
       modelFamilies: [],
       rawModelSearchByRoute: {},
       availabilitySearchByProfile: {},
@@ -2600,7 +3084,7 @@
     }
 
     function defaultModelFamilySuggestions() {
-      return ['GPT 系列', 'Claude 系列', 'GLM 系列', 'DeepSeek 系列', 'Gemini 系列', 'Image 系列', 'Banana 系列', 'Grok 系列', 'Mimo 系列'];
+      return ['GPT 系列', 'Claude 系列', 'GLM 系列', 'DeepSeek 系列', 'Gemini 系列', 'Image 系列', 'Banana 系列', 'Grok 系列', 'Mimo 系列', '未分类'];
     }
 
     function guessModelFamilyName(modelName) {
@@ -2756,16 +3240,112 @@
         && Array.isArray(data?.route_bindings);
     }
 
-    function statusPill(listening, port) {
+    function statusPill(listening, port, label) {
+      const serviceLabel = String(label || '服务');
+      const portText = port ? ` <span class="service-state-port">端口 ${escapeHtml(port)}</span>` : '';
       return listening
-        ? `<span class="pill ok">LISTENING ${port}</span>`
-        : `<span class="pill fail">DOWN</span>`;
+        ? `<span class="service-state service-state-ok">${escapeHtml(serviceLabel)}运行中${portText}</span>`
+        : `<span class="service-state service-state-fail">${escapeHtml(serviceLabel)}未启动${portText}</span>`;
+    }
+
+    const GATEWAY_COMPONENT_META = {
+      litellm: { label: 'LiteLLM 网关', description: 'OpenAI 兼容请求入口，负责模型转发与路由。', portKey: 'litellm', fallbackPort: 4100 },
+      claude: { label: 'Claude 网关', description: 'Claude Code 兼容请求入口，提供专用协议适配。', portKey: 'claude', fallbackPort: 4101 },
+    };
+
+    const SERVICE_DIALOG_META = {
+      gateway: {
+        label: '网关状态',
+        description: 'LiteLLM 和 Claude 网关共享同一套路由、供应商、额度与故障转移配置。',
+        controllable: true,
+        controlService: 'litellm',
+      },
+    };
+
+    function gatewayStatusDetails(serviceStatus = state.lastServiceStatus) {
+      const services = serviceStatus && typeof serviceStatus === 'object' ? serviceStatus : {};
+      const litellmListening = Boolean(services.litellm?.listening);
+      const claudeListening = Boolean(services.claude?.listening);
+      const hasStatus = Object.prototype.hasOwnProperty.call(services, 'litellm')
+        || Object.prototype.hasOwnProperty.call(services, 'claude');
+      return {
+        hasStatus,
+        litellmListening,
+        claudeListening,
+        anyListening: litellmListening || claudeListening,
+        ready: litellmListening && claudeListening,
+        stopped: hasStatus && !litellmListening && !claudeListening,
+      };
+    }
+
+    function gatewayStatusPill(serviceStatus = state.lastServiceStatus) {
+      const details = gatewayStatusDetails(serviceStatus);
+      const statusClass = !details.hasStatus
+        ? 'service-state-checking'
+        : details.ready ? 'service-state-ok' : 'service-state-fail';
+      const statusLabel = !details.hasStatus
+        ? '检查中'
+        : details.ready ? '运行中' : details.anyListening ? '部分运行' : '未就绪';
+      const statusDetail = !details.hasStatus
+        ? '等待服务状态'
+        : `LiteLLM ${details.litellmListening ? '正常' : '未启动'} · Claude ${details.claudeListening ? '正常' : '未启动'}`;
+      const stateName = !details.hasStatus ? 'checking' : details.ready ? 'ready' : details.anyListening ? 'partial' : 'offline';
+      return `<span class="service-state ${statusClass}" data-gateway-state="${stateName}">网关${statusLabel} <span class="service-state-port">${escapeHtml(statusDetail)}</span></span>`;
+    }
+
+    function gatewayComponentPort(serviceName, status = {}) {
+      const meta = GATEWAY_COMPONENT_META[serviceName];
+      if (!meta) return '';
+      return status.port || state.ports?.[meta.portKey] || meta.fallbackPort;
+    }
+
+    function renderGatewayServiceRows(serviceStatus = state.lastServiceStatus) {
+      const services = serviceStatus && typeof serviceStatus === 'object' ? serviceStatus : {};
+      return Object.entries(GATEWAY_COMPONENT_META).map(([serviceName, meta]) => {
+        const status = services[serviceName] || {};
+        const port = gatewayComponentPort(serviceName, status);
+        return `
+          <div class="gateway-service-row">
+            <div class="gateway-service-row-copy"><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.description)}</small></div>
+            ${statusPill(Boolean(status.listening), port, meta.label)}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderServiceDialog(serviceName = state.serviceDialogService) {
+      const meta = SERVICE_DIALOG_META[serviceName];
+      const overlay = el('service-management-overlay');
+      if (!meta || !overlay) return;
+      state.serviceDialogService = serviceName;
+      const details = gatewayStatusDetails();
+      el('service-management-title').textContent = meta.label;
+      el('service-management-status').innerHTML = gatewayStatusPill();
+      el('service-management-services').innerHTML = renderGatewayServiceRows();
+      el('service-management-description').textContent = meta.description;
+      renderServiceActions(serviceName, details.anyListening);
+    }
+
+    function openServiceDialog(serviceName) {
+      if (!SERVICE_DIALOG_META[serviceName]) return;
+      renderServiceDialog(serviceName);
+      el('service-management-overlay').dataset.open = 'true';
+    }
+
+    function hideServiceDialog() {
+      el('service-management-overlay').dataset.open = 'false';
+      state.serviceDialogService = '';
     }
 
     function renderServiceActions(serviceName, listening) {
-      const container = el(`service-actions-${serviceName}`);
-      if (!container) return;
+      const container = el('service-management-actions');
+      const meta = SERVICE_DIALOG_META[serviceName];
+      if (!container || !meta || state.serviceDialogService !== serviceName) return;
       const pendingAction = state.pendingServiceActions?.[serviceName] || '';
+      if (!meta.controllable) {
+        container.innerHTML = '<div class="helper-text">当前入口只显示状态，不提供服务控制。</div>';
+        return;
+      }
       if (pendingAction) {
         const pendingText = pendingAction === 'start' ? '启动中...' : pendingAction === 'stop' ? '停止中...' : '重启中...';
         container.innerHTML = `<button class="secondary" type="button" disabled>${pendingText}</button>`;
@@ -2773,27 +3353,26 @@
       }
       const buttons = listening
         ? `
-            <button class="secondary" type="button" data-service-name="${serviceName}" data-service-action="stop">停止</button>
-            <button class="secondary" type="button" data-service-name="${serviceName}" data-service-action="restart">重启</button>
+            <button class="secondary" type="button" data-service-name="${serviceName}" data-service-action="stop">停止网关</button>
+            <button class="secondary" type="button" data-service-name="${serviceName}" data-service-action="restart">重启网关</button>
           `
-        : `<button class="secondary" type="button" data-service-name="${serviceName}" data-service-action="start">启动</button>`;
+        : `<button class="secondary" type="button" data-service-name="${serviceName}" data-service-action="start">启动网关</button>`;
       container.innerHTML = buttons;
       container.querySelectorAll('[data-service-action]').forEach(button => {
         button.onclick = async () => {
           const action = button.dataset.serviceAction;
-          const label = serviceName === 'litellm' ? 'LiteLLM 网关' : 'Open WebUI';
+          const label = serviceName === 'gateway' ? '网关' : (SERVICE_DIALOG_META[serviceName]?.label || '服务');
           const actionText = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启';
           state.pendingServiceActions[serviceName] = action;
-          renderServiceActions(serviceName, listening);
-          button.disabled = true;
-          button.textContent = `${actionText}中...`;
+          renderServiceDialog(serviceName);
           setRoutingSaveStatus(`正在${actionText} ${label}，请稍候...`, 'saving');
-          const request = api(`/api/service/${serviceName}/${action}`, { method: 'POST' });
+          const controlService = SERVICE_DIALOG_META[serviceName]?.controlService || serviceName;
+          const request = api(`/api/service/${controlService}/${action}`, { method: 'POST' });
           request.then(result => {
             el('test-result').textContent = `已执行 ${label}${actionText}。\n${JSON.stringify(result, null, 2)}`;
           }).catch(error => {
             delete state.pendingServiceActions[serviceName];
-            renderServiceActions(serviceName, Boolean(state.lastServiceStatus?.[serviceName === 'open-webui' ? 'open_webui' : serviceName]?.listening));
+            renderServiceActions(serviceName, serviceName === 'gateway' ? gatewayStatusDetails().anyListening : Boolean(state.lastServiceStatus?.[serviceName]?.listening));
             setRoutingSaveStatus(`${label}${actionText}失败`, 'fail', true);
             el('test-result').textContent = String(error || `${label}${actionText}失败`);
           });
@@ -2803,13 +3382,15 @@
           for (let index = 0; index < maxChecks; index += 1) {
             await new Promise(resolve => window.setTimeout(resolve, 1500));
             try {
-              await loadState();
-              const serviceKey = serviceName === 'open-webui' ? 'open_webui' : serviceName;
-              const status = state.lastServiceStatus?.[serviceKey];
-              if (Boolean(status?.listening) === expectedListening) {
+              await refreshServiceStatus();
+              const details = gatewayStatusDetails();
+              const targetReached = serviceName === 'gateway'
+                ? expectedListening ? details.ready : details.stopped
+                : Boolean(state.lastServiceStatus?.[serviceName]?.listening) === expectedListening;
+              if (targetReached) {
                 reachedTarget = true;
                 delete state.pendingServiceActions[serviceName];
-                renderServiceActions(serviceName, Boolean(status?.listening));
+                renderServiceActions(serviceName, serviceName === 'gateway' ? details.anyListening : Boolean(state.lastServiceStatus?.[serviceName]?.listening));
                 break;
               }
             } catch {
@@ -2817,19 +3398,28 @@
             }
           }
           if (reachedTarget) {
+            await loadState();
             setRoutingSaveStatus(`${label}${actionText}完成`, 'ok', true);
           } else {
             delete state.pendingServiceActions[serviceName];
-            renderServiceActions(serviceName, Boolean(state.lastServiceStatus?.[serviceName === 'open-webui' ? 'open_webui' : serviceName]?.listening));
+            renderServiceActions(serviceName, serviceName === 'gateway' ? gatewayStatusDetails().anyListening : Boolean(state.lastServiceStatus?.[serviceName]?.listening));
             setRoutingSaveStatus(`${label}仍在${actionText}，请稍后点击刷新状态确认`, 'warn', true);
           }
-          button.disabled = false;
+          renderServiceDialog(serviceName);
         };
       });
     }
 
     function makeId(prefix) {
       return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    async function refreshServiceStatus() {
+      const data = await api('/api/service-status');
+      state.ports = { ...state.ports, ...(data.ports || {}) };
+      state.lastServiceStatus = data.service_status || {};
+      renderStatuses(state.lastServiceStatus);
+      return state.lastServiceStatus;
     }
 
     function readNestedValue(source, path, fallback = '') {
@@ -3050,16 +3640,32 @@
       return state.routeBindings.find(item => item.id === id);
     }
 
+    function rebuildBindingIndexes() {
+      const byRouteId = new Map();
+      const byApiProfileId = new Map();
+      const compareBindings = (a, b) => (Number(a.priority ?? 100) - Number(b.priority ?? 100))
+        || String(a.upstream_model || '').localeCompare(String(b.upstream_model || ''));
+
+      state.routeBindings.forEach(binding => {
+        const routeBindings = byRouteId.get(binding.model_route_id) || [];
+        routeBindings.push(binding);
+        byRouteId.set(binding.model_route_id, routeBindings);
+
+        const apiBindings = byApiProfileId.get(binding.api_profile_id) || [];
+        apiBindings.push(binding);
+        byApiProfileId.set(binding.api_profile_id, apiBindings);
+      });
+      byRouteId.forEach(bindings => bindings.sort(compareBindings));
+      byApiProfileId.forEach(bindings => bindings.sort(compareBindings));
+      state.bindingIndexes = { byRouteId, byApiProfileId };
+    }
+
     function bindingsForRoute(routeId) {
-      return state.routeBindings
-        .filter(item => item.model_route_id === routeId)
-        .sort((a, b) => (Number(a.priority ?? 100) - Number(b.priority ?? 100)) || String(a.upstream_model || '').localeCompare(String(b.upstream_model || '')));
+      return state.bindingIndexes.byRouteId.get(routeId) || [];
     }
 
     function bindingsForApiProfile(apiProfileId) {
-      return state.routeBindings
-        .filter(item => item.api_profile_id === apiProfileId)
-        .sort((a, b) => (Number(a.priority ?? 100) - Number(b.priority ?? 100)) || String(a.upstream_model || '').localeCompare(String(b.upstream_model || '')));
+      return state.bindingIndexes.byApiProfileId.get(apiProfileId) || [];
     }
 
     function supplierDeletionSummary(supplierId) {
@@ -3176,6 +3782,12 @@
     function renderRoutingRelationshipPanel() {
       const panel = el('routing-relationship-panel');
       if (!panel) return;
+      if (state.routingViewMode === 'by_supplier') {
+        panel.hidden = true;
+        panel.innerHTML = '';
+        return;
+      }
+      panel.hidden = false;
       const selection = ensureRoutingRelationshipSelection();
       if (selection.mode === 'supplier') {
         const profile = apiProfileById(selection.apiProfileId);
@@ -3465,7 +4077,20 @@
       clearTimeout(routingDraftTimer);
       if (state.routingSaving) {
         state.routingSaveQueued = true;
-        return;
+        // The caller must wait for the queued save path.  This matters for model
+        // sync: reporting success before the second request writes its bindings
+        // leaves the screen showing the previous mapping state.
+        await new Promise(resolve => {
+          const waitForSave = () => {
+            if (!state.routingSaving && !state.routingSaveQueued) {
+              resolve();
+              return;
+            }
+            window.setTimeout(waitForSave, 50);
+          };
+          waitForSave();
+        });
+        return saveRoutingDraft({ silent });
       }
       state.routingSaving = true;
       setRoutingSaveStatus(silent ? '自动保存中...' : '正在保存路由草稿...', 'saving');
@@ -4386,6 +5011,28 @@
       `;
     }
 
+    function bindRawModelCandidateControls(container) {
+      container.querySelectorAll('[data-route-raw-search]').forEach(input => {
+        input.addEventListener('input', () => {
+          const routeId = input.dataset.routeRawSearch;
+          if (!routeId) return;
+          state.rawModelSearchByRoute[routeId] = input.value || '';
+          hydrateRawModelCandidates(routeId, container);
+        });
+      });
+      container.querySelectorAll('[data-action]').forEach(button => {
+        button.addEventListener('click', handleRoutingAction);
+      });
+    }
+
+    function hydrateRawModelCandidates(routeId, container) {
+      const route = routeById(routeId);
+      if (!route || !container) return;
+      container.innerHTML = rawModelCandidatesTemplate(route);
+      container.dataset.loaded = 'true';
+      bindRawModelCandidateControls(container);
+    }
+
     function renderModelFamilyChips() {
       refreshModelFamilies();
       const container = el('model-family-chip-list');
@@ -4503,9 +5150,9 @@
             </div>
             ${legacyNameWarning}
             <div class="field full">
-              <label class="toggle-inline">
+              <label class="route-enabled-toggle">
                 <span>启用该模型路由</span>
-                <input data-route-id="${escapeHtml(route.id)}" data-route-key="enabled" type="checkbox" ${route.enabled === false ? '' : 'checked'}>
+                <input class="route-enabled-checkbox" data-route-id="${escapeHtml(route.id)}" data-route-key="enabled" type="checkbox" ${route.enabled === false ? '' : 'checked'}>
               </label>
             </div>
           </div>
@@ -4530,7 +5177,7 @@
             title: '供应商原始模型归并',
             description: '把各供应商返回的原始模型名，手动归并到这个公共模型下面',
             badge: '第三层原始模型',
-            body: `<div class="supplier-meta-card">${rawModelCandidatesTemplate(route)}</div>`,
+            body: `<div class="supplier-meta-card" data-route-raw-models-container="${escapeHtml(route.id)}"><div class="helper-text">展开后加载可归并的供应商原始模型。</div></div>`,
             defaultOpen: false,
           })}
           <div class="provider-actions">
@@ -5221,17 +5868,13 @@
         ? serviceStatus
         : (state.lastServiceStatus || {});
       state.lastServiceStatus = effectiveStatus;
-      const admin = effectiveStatus.admin_panel || {};
-      const lit = effectiveStatus.litellm || {};
-      const webui = effectiveStatus.open_webui || {};
-      el('status-admin').innerHTML = statusPill(admin.listening, admin.port || state.ports.admin_panel || 8091);
-      el('status-litellm').innerHTML = statusPill(lit.listening, lit.port || state.ports.litellm || 4100);
-      el('status-webui').innerHTML = statusPill(webui.listening, webui.port || state.ports.open_webui || 8090);
-      renderServiceActions('litellm', Boolean(lit.listening));
-      renderServiceActions('open-webui', Boolean(webui.listening));
+      if (el('service-management-overlay')?.dataset.open === 'true' && state.serviceDialogService) {
+        renderServiceDialog(state.serviceDialogService);
+      }
     }
 
     function renderRouting() {
+      rebuildBindingIndexes();
       const scopedApiAction = applyApiActionScope();
       if (!scopedApiAction) {
         rememberRoutingLayout();
@@ -5255,9 +5898,7 @@
           : '<div class="empty-state">杩樻病鏈変緵搴斿晢銆傚厛鏂板渚涘簲鍟嗭紝鍐嶉厤缃?API銆?<div class="provider-actions" style="justify-content: center; margin-top: 12px;"><button class="secondary" type="button" data-action="add-supplier">新增供应商</button></div></div>';
       } else {
         const search = String(state.modelRouteSearch || '').trim().toLowerCase();
-        const pinnedOnly = !!state.modelRoutePinnedOnly;
         const routes = state.modelRoutes
-          .filter(route => !pinnedOnly || isPinnedModelRoute(route.id))
           .filter(route => !search || routeSearchText(route).includes(search))
           .slice()
           .sort((a, b) => {
@@ -5292,6 +5933,7 @@
 
       renderRoutingRelationshipPanel();
       bindRoutingInputs();
+      hydrateOpenRawModelSections();
       document.querySelectorAll('[data-route-family-quick]').forEach(select => {
         select.addEventListener('change', () => {
           const routeId = select.dataset.routeFamilyQuick;
@@ -5357,6 +5999,22 @@
       renderEnv();
       renderTestModelOptions();
       renderStatuses(serviceStatus);
+    }
+
+    function hydrateApiProfileDetails(profileId) {
+      if (!profileId || state.openApiProfileIds.includes(profileId)) return;
+      state.openApiProfileIds.push(profileId);
+      renderRouting();
+    }
+
+    function hydrateOpenRawModelSections() {
+      document.querySelectorAll('.fold-card[open][data-fold-key^="route-raw-models-"]').forEach(card => {
+        const routeId = card.closest('.route-group')?.dataset.routeGroupId;
+        const container = card.querySelector('[data-route-raw-models-container]');
+        if (routeId && container && container.dataset.loaded !== 'true') {
+          hydrateRawModelCandidates(routeId, container);
+        }
+      });
     }
 
     function bindRoutingInputs() {
@@ -5442,6 +6100,13 @@
           const foldKey = card.dataset.foldKey;
           if (!foldKey) return;
           setFoldSectionOpen(foldKey, card.open);
+          if (card.open && foldKey.startsWith('route-raw-models-')) {
+            const routeId = card.closest('.route-group')?.dataset.routeGroupId;
+            const container = card.querySelector('[data-route-raw-models-container]');
+            if (routeId && container && container.dataset.loaded !== 'true') {
+              hydrateRawModelCandidates(routeId, container);
+            }
+          }
         });
       });
       document.querySelectorAll('.api-card[data-api-card-id]').forEach(card => {
@@ -5449,9 +6114,7 @@
           const apiCardId = card.dataset.apiCardId;
           if (!apiCardId) return;
           if (card.open) {
-            if (!state.openApiProfileIds.includes(apiCardId)) {
-              state.openApiProfileIds.push(apiCardId);
-            }
+            hydrateApiProfileDetails(apiCardId);
             state.relationshipSelection = { mode: 'supplier', routeId: '', apiProfileId: apiCardId };
             renderRoutingRelationshipPanel();
           } else {
@@ -5795,6 +6458,54 @@
           .map(modelName => normalizeBindingModelKey(modelName))
           .filter(Boolean)
       );
+      profile.raw_model_families = profile.raw_model_families && typeof profile.raw_model_families === 'object'
+        ? profile.raw_model_families
+        : {};
+      let categorizedModels = 0;
+      (knownModels || []).forEach(modelName => {
+        const modelKey = normalizeBindingModelKey(modelName);
+        if (!modelKey) return;
+        const currentFamily = String(profile.raw_model_families[modelKey] || '').trim();
+        if (!currentFamily) {
+          profile.raw_model_families[modelKey] = guessModelFamilyName(modelName) || UNCATEGORIZED_MODEL_FAMILY;
+        }
+        categorizedModels += 1;
+      });
+
+      // An exact public-name match is safe to bind automatically.  Do not guess
+      // across similar names, and do not publish the route as part of discovery.
+      rebuildBindingIndexes();
+      const routesByModelKey = new Map();
+      state.modelRoutes.forEach(route => {
+        const routeKey = normalizeBindingModelKey(route.public_model_name || '');
+        if (!routeKey) return;
+        const matches = routesByModelKey.get(routeKey) || [];
+        matches.push(route);
+        routesByModelKey.set(routeKey, matches);
+      });
+      (knownModels || []).forEach(modelName => {
+        const modelKey = normalizeBindingModelKey(modelName);
+        const matchingRoutes = routesByModelKey.get(modelKey) || [];
+        if (!modelKey || matchingRoutes.length !== 1) return;
+        const route = matchingRoutes[0];
+        const alreadyBound = bindingsForRoute(route.id).some(binding =>
+          binding.api_profile_id === profile.id
+          && normalizeBindingModelKey(binding.upstream_model || '') === modelKey
+        );
+        const boundToAnotherRoute = state.routeBindings.some(binding =>
+          binding.api_profile_id === profile.id
+          && normalizeBindingModelKey(binding.upstream_model || '') === modelKey
+          && binding.model_route_id !== route.id
+        );
+        if (alreadyBound || boundToAnotherRoute) return;
+        const binding = defaultRouteBinding(route.id, profile.id);
+        binding.upstream_model = String(modelName || '').trim();
+        binding.priority = nextBindingPriority(route.id);
+        state.routeBindings.push(binding);
+        rebuildBindingIndexes();
+        syncedRouteIds.push(route.id);
+        createdBindings += 1;
+      });
 
       // A sync is authoritative for this API. Keep old bindings for auditability,
       // but stop routing through models that disappeared from the latest /models list.
@@ -5823,10 +6534,8 @@
         }
       });
 
-      // Discovery only records supplier capabilities.  It must not silently
-      // create a public route: the user maps each raw model explicitly below.
       state.openRouteIds = [...new Set([...state.openRouteIds, ...syncedRouteIds])];
-      return { createdRoutes, createdBindings, updatedBindings: restoredBindings, staleBindings, restoredBindings, liveModels: liveModelKeys.size };
+      return { createdRoutes, createdBindings, updatedBindings: restoredBindings, staleBindings, restoredBindings, liveModels: liveModelKeys.size, categorizedModels };
     }
 
     function updateRouteField(input) {
@@ -5913,17 +6622,19 @@
         .join('');
     }
 
+    const UNCATEGORIZED_MODEL_FAMILY = '未分类';
+
     function rawModelFamily(profile, rawModel, matches = []) {
       const families = profile.raw_model_families && typeof profile.raw_model_families === 'object'
         ? profile.raw_model_families
         : {};
-      return String(families[normalizeBindingModelKey(rawModel)] || routeById(matches.find(item => !item.mapping_conflict)?.model_route_id || '')?.model_family || guessModelFamilyName(rawModel) || '').trim();
+      return String(families[normalizeBindingModelKey(rawModel)] || routeById(matches.find(item => !item.mapping_conflict)?.model_route_id || '')?.model_family || guessModelFamilyName(rawModel) || UNCATEGORIZED_MODEL_FAMILY).trim();
     }
 
     function rawModelFamilyOptions(selectedFamily = '') {
       const families = [...new Set([...state.modelFamilies, ...state.modelRoutes.map(route => route.model_family)])]
         .map(value => String(value || '').trim()).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-CN'));
-      return [`<option value="" ${selectedFamily ? '' : 'selected'}>未分类</option>`, ...families.map(family => `<option value="${escapeHtml(family)}" ${family === selectedFamily ? 'selected' : ''}>${escapeHtml(family)}</option>`)].join('');
+      return families.map(family => `<option value="${escapeHtml(family)}" ${family === selectedFamily ? 'selected' : ''}>${escapeHtml(family)}</option>`).join('');
     }
 
     function rawModelRouteOptions(family, rawModel, selectedRouteId = '') {
@@ -6986,27 +7697,41 @@
         if (!profile) return;
         beginApiActionScope(profileId);
         const restoreButton = startActionButtonFeedback(button, '同步中...');
-        showFloatingActionNotice('正在同步模型列表…', 'saving', { persistent: true });
+        showFloatingActionNotice('正在请求供应商模型列表，请稍候…', 'saving', { persistent: true });
         try {
           const result = await checkApiProfiles([profile], false);
           const item = result.results?.[0];
-          if (!item || !['green', 'yellow'].includes(item.status)) {
+          if (!item || item.status !== 'green') {
             throw new Error(item?.reason || '上游未返回可用模型列表');
           }
+          showFloatingActionNotice('模型列表已返回，正在整理模型分类…', 'saving', { persistent: true });
           const previousModels = new Set(
             (profile.known_models || []).map(modelName => normalizeBindingModelKey(modelName)).filter(Boolean)
           );
           const nextModels = [...new Set((item.known_ids || []).map(modelName => String(modelName || '').trim()).filter(Boolean))];
           profile.known_models = nextModels;
           const syncResult = syncKnownModelsToRoutes(profile, profile.known_models);
-          markRoutingDirty();
+          markRoutingDirty({ autosave: false });
+          renderAll();
           try {
-            await saveAll();
+            showFloatingActionNotice('模型分类已完成，正在保存同步结果…', 'saving', { persistent: true });
+            await saveRoutingDraft({ silent: false });
+            // Read the persisted state back before claiming that synchronization
+            // succeeded.  The in-memory array alone cannot prove the backend kept
+            // the newly created bindings.
+            await loadState();
+            const savedProfile = state.apiProfiles.find(item => item.id === profile.id);
+            const persistedBindingCount = bindingsForApiProfile(profile.id).filter(binding =>
+              binding.enabled !== false && !binding.mapping_conflict
+            ).length;
+            if (!savedProfile || persistedBindingCount < syncResult.createdBindings + (syncResult.updatedBindings || 0)) {
+              throw new Error(`同步绑定未完整落盘：预期至少 ${syncResult.createdBindings + (syncResult.updatedBindings || 0)} 条，本地当前有效 ${persistedBindingCount} 条`);
+            }
             const addedModels = nextModels.filter(modelName => !previousModels.has(normalizeBindingModelKey(modelName))).length;
             const bindingSummary = `创建 ${syncResult.createdBindings} 条、更新 ${syncResult.updatedBindings || 0} 条、停用 ${syncResult.staleBindings} 条绑定`;
             showFloatingActionNotice(
               nextModels.length
-                ? `同步完成：发现 ${nextModels.length} 个原始模型；${bindingSummary}。`
+                ? `同步完成：发现并分类 ${nextModels.length} 个原始模型；${bindingSummary}。`
                 : `同步完成，但未发现模型；${bindingSummary}。`,
               nextModels.length ? 'ok' : 'warn',
             );
@@ -7132,6 +7857,7 @@
       state.modelRoutePinnedIds = state.modelRoutes.filter(route => route.gateway_enabled === true).map(route => route.id);
       writePinnedModelRoutesPreference();
       state.routeBindings = data.route_bindings || [];
+      rebuildBindingIndexes();
       state.env = data.env || {};
       state.router_settings = data.router_settings || {};
       state.litellm_settings = data.litellm_settings || {};
@@ -7461,24 +8187,135 @@
 
     function integrationStatusText(client, publishedModels) {
       const configured = client?.configured ? '已检测到配置' : '尚未配置';
-      return `${configured}；将同步 ${publishedModels} 个已发布模型。`;
+      const updatedAt = Number(client?.config_updated_at || 0);
+      const updatedText = updatedAt
+        ? `最近修改：${new Date(updatedAt * 1000).toLocaleString('zh-CN', { hour12: false })}。`
+        : '';
+      return `${configured}；将同步 ${publishedModels} 个已发布模型。${updatedText}`;
+    }
+
+    function agentActivityText(agent) {
+      const configuredAt = Number(agent?.last_configured_at || 0);
+      const viewedAt = Number(agent?.last_viewed_at || 0);
+      const formatTime = timestamp => new Date(timestamp * 1000).toLocaleString('zh-CN', { hour12: false });
+      if (configuredAt) return `本地优先级：最近配置于 ${formatTime(configuredAt)}`;
+      if (viewedAt) return `本地优先级：最近查看于 ${formatTime(viewedAt)}`;
+      return '本地优先级：尚无查看或配置记录';
+    }
+
+    function recordAgentView(agentId) {
+      void api(`/api/agent-integrations/${encodeURIComponent(agentId)}/activity`, {
+        method: 'POST',
+        body: JSON.stringify({ event: 'viewed' }),
+      }).catch(() => {
+        // Viewing a row must never prevent the Agent's primary action.
+      });
     }
 
     async function refreshClientIntegrations() {
-      const targets = {
-        codex: el('client-integration-codex-status'),
-        opencode: el('client-integration-opencode-status'),
-        claude_code: el('client-integration-claude-code-status'),
+      await refreshAgentRegistry();
+    }
+
+    const AGENT_ICON_PATHS = {
+      'claude-code': '/static/assets/client-icons/claude-code.svg',
+      'claude-agent-teams': '/static/assets/client-icons/claude-code.svg',
+      codex: '/static/assets/client-icons/codex.svg',
+      opencode: '/static/assets/client-icons/opencode.svg',
+      aider: '/static/assets/agent-icons/aider.svg',
+      workbuddy: '/static/assets/agent-icons/workbuddy.png',
+      pi: '/static/assets/agent-icons/pi.svg',
+      omp: '/static/assets/agent-icons/omp.svg',
+    };
+    const AGENT_CLIENT_ICON_IDS = new Set(['claude-code', 'claude-agent-teams', 'codex', 'opencode']);
+
+    function createAgentIcon(agent) {
+      const icon = document.createElement('span');
+      icon.className = `agent-app-icon${AGENT_CLIENT_ICON_IDS.has(agent.id) ? ' client-icon' : ''}`;
+      const source = AGENT_ICON_PATHS[agent.id] || `/static/assets/agent-icons/${agent.id}.png`;
+      const image = document.createElement('img');
+      image.src = source;
+      image.alt = '';
+      image.onerror = () => {
+        image.remove();
+        icon.textContent = (agent.label || '?').trim().slice(0, 1).toUpperCase();
       };
-      Object.values(targets).forEach(node => { node.textContent = '正在检查配置…'; });
+      icon.appendChild(image);
+      return icon;
+    }
+
+    function showAgentConfiguration(agent, button) {
+      if (agent.id === 'codex') return showCodexSyncPreview();
+      if (agent.id === 'claude-code') return showClaudeSyncPreview();
+      return applyClientIntegration('opencode', button);
+    }
+
+    function renderAgentRegistry(agents) {
+      const target = el('agent-registry-list');
+      target.replaceChildren();
+      if (!(agents || []).length) {
+        target.textContent = '当前没有可显示的 Agent。';
+        return;
+      }
+      (agents || []).forEach(agent => {
+        const row = document.createElement('article');
+        row.className = 'agent-integration-row';
+        if (agent.integration_level !== 'full') row.title = agent.safe_mode_notice;
+        const identity = document.createElement('div'); identity.className = 'agent-integration-identity';
+        const titleRow = document.createElement('div'); titleRow.className = 'agent-integration-title-row';
+        const title = document.createElement('strong'); title.textContent = agent.label;
+        const badge = document.createElement('span');
+        const gatewaySupported = agent.gateway_configuration_supported !== false;
+        badge.className = `agent-integration-badge${agent.detected && gatewaySupported ? ' online' : ''}${gatewaySupported ? '' : ' unsupported'}`;
+        badge.textContent = gatewaySupported
+          ? (agent.configured ? '已配置' : agent.detected ? '已检测' : '未安装')
+          : '暂不支持';
+        titleRow.append(title, badge);
+        const command = document.createElement('code'); command.className = 'agent-integration-command'; command.textContent = agent.command;
+        identity.append(titleRow, command);
+
+        const detail = document.createElement('div'); detail.className = 'agent-integration-detail';
+        const protocol = document.createElement('div'); protocol.className = 'agent-integration-meta'; protocol.textContent = `协议：${agent.protocol}`;
+        const status = document.createElement('div'); status.className = 'agent-integration-meta';
+        status.textContent = agent.integration_level === 'full'
+          ? integrationStatusText(agent, agent.model_count || 0)
+          : agent.configuration_status;
+        const activity = document.createElement('div'); activity.className = 'agent-integration-meta'; activity.textContent = agentActivityText(agent);
+        detail.append(protocol, status, activity);
+
+        const actions = document.createElement('div'); actions.className = 'agent-integration-actions';
+        if (agent.integration_level === 'full') {
+          const configure = document.createElement('button'); configure.className = 'secondary'; configure.type = 'button'; configure.textContent = `同步 ${agent.label}`;
+          configure.onclick = () => showAgentConfiguration(agent, configure);
+          actions.appendChild(configure);
+          if (agent.id === 'codex' || agent.id === 'claude-code') {
+            const mapping = document.createElement('button'); mapping.className = 'secondary'; mapping.type = 'button'; mapping.textContent = '模型对应映射';
+            mapping.onclick = () => showClientShortcuts(agent.id === 'claude-code' ? 'claude_code' : 'codex');
+            actions.appendChild(mapping);
+          }
+        } else if (agent.homepage_url) {
+          const link = document.createElement('a'); link.className = 'link-button'; link.href = agent.homepage_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '查看接入文档'; actions.appendChild(link);
+        }
+        row.append(createAgentIcon(agent), identity, detail, actions);
+        row.addEventListener('click', () => recordAgentView(agent.id));
+        target.appendChild(row);
+      });
+    }
+
+    async function refreshAgentRegistry(force = false) {
+      const status = el('agent-registry-status');
+      const button = el('btn-refresh-agent-registry');
+      status.textContent = '正在检查本机 Agent 命令…';
+      if (button) button.disabled = true;
       try {
-        const result = await api('/api/client-integrations');
-        const count = (result.models || []).length;
-        Object.entries(targets).forEach(([name, node]) => {
-          node.textContent = integrationStatusText((result.clients || {})[name], count);
-        });
-      } catch (_error) {
-        Object.values(targets).forEach(node => { node.textContent = '无法读取集成状态，请确认管理台正在运行。'; });
+        const result = await api(`/api/agent-integrations${force ? '?force=true' : ''}`);
+        renderAgentRegistry(result.agents || []);
+        const detected = (result.agents || []).filter(agent => agent.detected).length;
+        status.textContent = `已检查 ${result.total_count || 0} 个 Agent：${result.full_integration_count || 0} 个支持完整自动配置，${detected} 个已在本机检测到。`;
+      } catch (error) {
+        el('agent-registry-list').textContent = '无法读取 Agent 检测结果。';
+        status.textContent = `检测失败：${error?.message || '请确认管理台正在运行。'}`;
+      } finally {
+        if (button) button.disabled = false;
       }
     }
 
@@ -7609,6 +8446,25 @@
       });
     }
 
+    function renderSyncPreviewSummary(targetId, summary) {
+      const target = el(targetId);
+      target.replaceChildren();
+      const rows = [
+        ['当前默认路径', summary?.current_route || '未能识别'],
+        ['同步后路径', summary?.next_route || 'RelayDeck 本地网关'],
+        ['当前密钥引用', summary?.current_credential || '未能识别'],
+        ['同步后密钥', summary?.next_credential || '由 RelayDeck 管理'],
+        ['保留内容', summary?.preservation || '其他现有配置保持不变'],
+        ['恢复方式', summary?.recovery || '应用前自动创建备份'],
+      ];
+      rows.forEach(([label, value]) => {
+        const row = document.createElement('div'); row.className = 'sync-route-summary-row';
+        const title = document.createElement('strong'); title.textContent = label;
+        const text = document.createElement('span'); text.textContent = value;
+        row.append(title, text); target.appendChild(row);
+      });
+    }
+
     async function showCodexSyncPreview() {
       setRoutingSaveStatus('正在生成 Codex 配置预览…', 'muted', true);
       setCodexSyncPreviewError('');
@@ -7616,6 +8472,7 @@
         const result = await api('/api/client-integrations/codex/preview');
         el('codex-sync-current').value = result.current || '';
         el('codex-sync-candidate').value = result.candidate || '';
+        renderSyncPreviewSummary('codex-sync-summary', result.sync_summary);
         renderConfigDiff('codex-sync-diff', result.diff);
         el('codex-sync-preview-overlay').dataset.open = 'true';
         await refreshCodexBackups();
@@ -7717,6 +8574,7 @@
         const result = await api('/api/client-integrations/claude-code/preview');
         el('claude-sync-current').value = result.current || '';
         el('claude-sync-candidate').value = result.candidate || '';
+        renderSyncPreviewSummary('claude-sync-summary', result.sync_summary);
         renderConfigDiff('claude-sync-diff', result.diff);
         el('claude-sync-preview-overlay').dataset.open = 'true';
         await refreshClaudeBackups();
@@ -7843,21 +8701,24 @@
       el('litellm-auth-scheme').textContent = currentLiteLlmAuthScheme();
       el('litellm-models-curl').value = currentLiteLlmCurlCommand();
       el('litellm-models-overlay').dataset.open = 'true';
-      refreshClientIntegrations();
-      refreshClientGatewayModels();
+      refreshAgentRegistry();
+      refreshPublishedPublicModels();
     }
 
-    async function refreshClientGatewayModels() {
-      el('client-gateway-models-status').textContent = '正在读取运行中的本地网关…';
-      el('client-openai-model-list').textContent = '加载中…';
-      el('client-claude-model-list').textContent = '加载中…';
+    async function refreshPublishedPublicModels() {
+      el('published-public-models-status').textContent = '正在读取 RelayDeck 已发布公共模型…';
+      el('published-public-model-list').textContent = '加载中…';
       try {
-        const result = await api('/api/client-gateway-models');
-        const openai = result.openai || {}; const claude = result.claude || {};
-        renderClientGatewayModelList('client-openai-model-list', openai.models || [], openai.error, '当前没有已发布且可发现的模型');
-        renderClientGatewayModelList('client-claude-model-list', claude.models || [], claude.error, '当前没有可发现的 Claude Code 模型', item => item.public_model_name ? `${item.alias}（公共模型：${item.public_model_name}）` : item.alias);
-        el('client-gateway-models-status').textContent = (openai.error || claude.error) ? '部分网关不可用；未显示任何密钥。' : '已从运行中的两个本地网关刷新。';
-      } catch (_error) { el('client-gateway-models-status').textContent = '读取失败，请确认本地网关已启动。'; el('client-openai-model-list').textContent = '无法读取'; el('client-claude-model-list').textContent = '无法读取'; }
+        const result = await api('/api/client-shortcuts');
+        const models = result.models || [];
+        renderClientGatewayModelList('published-public-model-list', models, '', '当前没有已发布的公共模型', item => item.display_name || item.id);
+        el('published-public-models-status').textContent = models.length
+          ? `当前已发布 ${models.length} 个公共模型；同步 Agent 时将使用这份列表。`
+          : '当前没有已发布的公共模型。请先在模型路由中置顶并发布。';
+      } catch (_error) {
+        el('published-public-models-status').textContent = '读取发布状态失败，请确认管理台正在运行。';
+        el('published-public-model-list').textContent = '无法读取';
+      }
     }
 
     function renderClientGatewayModelList(targetId, models, error, emptyText, format = item => String(item)) {
@@ -8010,6 +8871,7 @@
       }
       const label = el('auto-refresh-balances-label');
       if (label) {
+        label.dataset.state = state.autoRefreshBalancesEnabled ? 'on' : 'off';
         label.textContent = state.autoRefreshBalancesEnabled
           ? ('自动 ' + Math.round(state.autoRefreshBalancesMs / 60000) + ' 分钟')
           : '已关闭';
@@ -8026,11 +8888,11 @@
         return;
       }
       const wrapper = document.createElement('label');
-      wrapper.className = 'toggle-inline';
-      wrapper.style.gap = '8px';
-      wrapper.innerHTML = '<span>自动刷新余额</span><input id="auto-refresh-balances-toggle" type="checkbox">';
+      wrapper.className = 'auto-refresh-toggle';
+      wrapper.title = '按设定间隔自动刷新供应商余额';
+      wrapper.innerHTML = '<span>自动刷新余额</span><input id="auto-refresh-balances-toggle" class="auto-refresh-checkbox" type="checkbox">';
       const badge = document.createElement('span');
-      badge.className = 'pill muted';
+      badge.className = 'pill muted auto-refresh-status';
       badge.id = 'auto-refresh-balances-label';
       badge.textContent = '自动 ' + Math.round(state.autoRefreshBalancesMs / 60000) + ' 分钟';
       refreshUsageButton.insertAdjacentElement('afterend', badge);
@@ -8345,6 +9207,13 @@
       ensureAutoRefreshBalancesControls();
       updateAutoRefreshBalancesUi();
       el('btn-refresh').onclick = () => loadState();
+      document.querySelectorAll('[data-service-dialog]').forEach(button => {
+        button.onclick = () => openServiceDialog(button.dataset.serviceDialog);
+      });
+      el('btn-close-service-management').onclick = hideServiceDialog;
+      el('service-management-overlay').onclick = event => {
+        if (event.target === el('service-management-overlay')) hideServiceDialog();
+      };
       el('btn-add-model-route').onclick = () => {
         state.modelRoutes.push(defaultModelRoute());
         state.routingViewMode = 'by_model';
@@ -8359,11 +9228,11 @@
       };
       el('btn-view-model').onclick = () => {
         state.routingViewMode = 'by_model';
-        renderAll();
+        renderRouting();
       };
       el('btn-view-supplier').onclick = () => {
         state.routingViewMode = 'by_supplier';
-        renderAll();
+        renderRouting();
       };
       el('btn-save-routing-draft').onclick = () => saveRoutingDraft({ silent: false });
       el('btn-close-floating-action-notice').onclick = hideFloatingActionNotice;
@@ -8373,7 +9242,6 @@
       el('btn-test-direct').onclick = testDirect;
       el('btn-list-models').onclick = listModels;
       el('btn-log-litellm').onclick = () => showLog('litellm.stderr.log');
-      el('btn-log-openwebui').onclick = () => showLog('open-webui.stderr.log');
       el('btn-log-admin').onclick = () => showLog('admin-panel.stderr.log');
       el('btn-refresh-balances').onclick = refreshBalances;
       el('btn-refresh-usage').onclick = refreshUsageDashboard;
@@ -8381,6 +9249,7 @@
       el('btn-show-litellm-connection-info').onclick = showLiteLlmModelsInfoDialog;
       el('btn-show-litellm-client-help').onclick = showLiteLlmConnectionHelpDialog;
       el('btn-configure-claude-code').onclick = configureClaudeCodeDiscovery;
+      el('btn-refresh-agent-registry').onclick = () => refreshAgentRegistry(true);
       document.querySelectorAll('[data-client-integration]').forEach(button => {
         button.onclick = () => button.dataset.clientIntegration === 'codex'
           ? showCodexSyncPreview()
@@ -8463,16 +9332,6 @@
           hideUtilityDialog('diagnostics-overlay');
         }
       };
-      el('btn-open-webui').onclick = () => {
-        const listening = Boolean(state.lastServiceStatus?.open_webui?.listening);
-        if (!listening) {
-          setRoutingSaveStatus('Open WebUI 尚未启动，请先点击左侧“启动”', 'warn', true);
-          return;
-        }
-        const port = state.ports?.open_webui || 8090;
-        window.open(`http://127.0.0.1:${port}`, '_blank', 'noopener,noreferrer');
-      };
-      el('btn-show-litellm-connection-help').onclick = showLiteLlmConnectionHelpDialog;
       el('btn-close-litellm-models-overlay').onclick = hideLiteLlmModelsInfoDialog;
       el('litellm-models-overlay').onclick = event => {
         if (event.target === el('litellm-models-overlay')) {
@@ -8489,7 +9348,7 @@
       el('btn-copy-litellm-api-key').onclick = () => copyTextToClipboard(currentLiteLlmApiKey(), 'API Key 已复制');
       el('btn-copy-litellm-auth-scheme').onclick = () => copyTextToClipboard(currentLiteLlmAuthScheme(), '授权头格式已复制');
       el('btn-copy-litellm-models-curl').onclick = () => copyTextToClipboard(currentLiteLlmCurlCommand(), 'curl 命令已复制');
-      el('btn-refresh-client-gateway-models').onclick = refreshClientGatewayModels;
+      el('btn-refresh-published-public-models').onclick = refreshPublishedPublicModels;
       el('btn-close-new-api-overlay').onclick = () => closeNewApiModal();
       el('btn-cancel-new-api').onclick = () => closeNewApiModal();
       el('btn-save-new-api').onclick = saveNewApiFromModal;
@@ -8556,19 +9415,14 @@
           renderRouting();
         };
       }
-      const modelRoutePinnedOnlyToggle = el('model-route-pinned-only');
-      if (modelRoutePinnedOnlyToggle) {
-        modelRoutePinnedOnlyToggle.checked = !!state.modelRoutePinnedOnly;
-        modelRoutePinnedOnlyToggle.onchange = () => {
-          state.modelRoutePinnedOnly = !!modelRoutePinnedOnlyToggle.checked;
-          renderRouting();
-        };
-      }
     }
 
     applyAppearanceTheme(readAppearanceThemePreference(), false);
     bindToolbar();
     document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && el('service-management-overlay')?.dataset.open === 'true') {
+        hideServiceDialog();
+      }
       if (event.key === 'Escape' && el('litellm-connection-help-overlay')?.dataset.open === 'true') {
         hideLiteLlmConnectionHelpDialog();
       }
@@ -9184,6 +10038,23 @@
       const references = bindingsForApiProfile(profile.id);
       const staleReferences = references.filter(bindingSyncIsStale);
       const selected = references.some(item => item.id === state.selectedBindingId);
+      const isOpen = state.openApiProfileIds.includes(profile.id) || state.newApiFocusId === profile.id;
+      if (!isOpen) {
+        return `
+          <details class="api-card" data-api-card-id="${escapeHtml(profile.id)}" data-new-api-focus="false" data-selected="${selected ? 'true' : 'false'}">
+            <summary class="provider-head">
+              <div class="provider-title">
+                <strong>${escapeHtml(profile.label || '未命名 API')}</strong>
+                <span>${escapeHtml(supplierDisplayName(supplier) || '未分组供应商')} / ${escapeHtml(profile.api_base || '未设置 API Base')}</span>
+              </div>
+              <div class="summary-right">
+                <span class="status-light ${escapeHtml(status.status || 'unknown')}">${escapeHtml(status.reason || '未检查')}</span>
+              </div>
+            </summary>
+            <div data-api-lazy-content="${escapeHtml(profile.id)}"></div>
+          </details>
+        `;
+      }
       const knownModels = Array.isArray(profile.known_models) ? profile.known_models : [];
       const knownModelsCount = Array.isArray(profile.known_models) ? profile.known_models.length : 0;
       const providerName = (profile.custom_llm_provider || 'openai').trim().toLowerCase();
@@ -9337,7 +10208,7 @@
       [...knownModelRows, ...staleModelRows].forEach(row => {
         const activeBinding = row.matches.find(binding => !binding.mapping_conflict && binding.enabled !== false);
         const route = activeBinding ? routeById(activeBinding.model_route_id) : null;
-        const family = route?.model_family || '待映射';
+        const family = rawModelFamily(profile, row.rawModel, row.matches);
         const publicModel = route?.public_model_name || '待映射';
         if (!availabilityGroups.has(family)) availabilityGroups.set(family, new Map());
         const publicGroups = availabilityGroups.get(family);
@@ -9390,7 +10261,7 @@
           `;
         }).join('');
       const refsBody = `
-        <div class="helper-text">每条原始模型都先选择模型系列，再映射到一个公共模型。未完成映射的模型会单独归入“待映射”。</div>
+        <div class="helper-text">同步后会按模型名称生成初始系列；无法精确识别的模型归入“未分类”。公共模型映射仍可稍后手动设置。</div>
         ${staleReferences.length ? `<div class="helper-text warn">最近一次同步未在 /models 中发现 ${staleReferences.length} 条历史绑定，已自动停用；确认不再使用后可清理。</div>` : ''}
         <div class="provider-actions">
           <label class="model-availability-control"><span class="model-availability-label">批量公共模型后缀</span><input data-api-model-suffix="${escapeHtml(profile.id)}" placeholder="例如 -lingsuan"></label>
@@ -9409,7 +10280,7 @@
         </div>
       `;
       return `
-        <details class="api-card" data-api-card-id="${escapeHtml(profile.id)}" data-new-api-focus="${state.newApiFocusId === profile.id ? 'true' : 'false'}" data-selected="${selected ? 'true' : 'false'}" ${state.openApiProfileIds.includes(profile.id) ? 'open' : ''}>
+        <details class="api-card" data-api-card-id="${escapeHtml(profile.id)}" data-new-api-focus="${state.newApiFocusId === profile.id ? 'true' : 'false'}" data-selected="${selected ? 'true' : 'false'}" open>
           <summary class="provider-head">
             <div class="provider-title">
               <strong>${escapeHtml(profile.label || '未命名 API')}</strong>

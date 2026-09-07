@@ -123,6 +123,10 @@ test('status IPC checks use a bounded health request timeout', async () => {
   const mainSource = await readDesktopSource('src/main.js');
 
   assert.match(mainSource, /isManagementPanelHealthy\(fetch,\s*[^,]+,\s*\{\s*requestTimeoutMs:\s*\d+/);
+  assert.match(mainSource, /\/api\/service-status/);
+  assert.match(mainSource, /serviceStatus/);
+  assert.match(mainSource, /managementHealthy/);
+  assert.doesNotMatch(mainSource, /isPortOpen\(SERVICE_PORTS\.litellm\)/);
 });
 
 test('package scripts and dependencies use pinned versions', async () => {
@@ -157,8 +161,20 @@ test('desktop shell hides inactive states and assigns the management iframe URL 
     readDesktopSource('src/shell.css'),
   ]);
 
-  assert.match(shellScript, /panel\.getAttribute\('src'\)/);
+  assert.match(shellScript, /function managementPanelUrl\(managementUrl\)/);
+  assert.match(shellScript, /managementUrl\.includes\('\?'\) \? '&' : '\?'/);
+  assert.match(shellScript, /managementPanelRevision/);
+  assert.match(shellScript, /function showPanel\(status, \{ forceReload = false \} = \{\}\)/);
+  assert.match(shellScript, /forceReload \|\| !panel\.getAttribute\('src'\)/);
+  assert.match(shellScript, /panel\.src = panelUrl/);
+  assert.match(shellScript, /retry-services.*refresh\(\{ forceReload: true \}\)/s);
+  assert.match(shellScript, /status\?\.healthy \? showPanel\(status, \{ forceReload: true \}\)/);
   assert.match(shellCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+  assert.match(shellScript, /managementHealthy/);
+  assert.match(shellScript, /stackHealthy/);
+  assert.match(shellScript, /async function refreshStatusOnly\(\)/);
+  assert.match(shellScript, /showPanel\(status, \{ forceReload: true \}\)/);
+  assert.match(shellScript, /setInterval\(refreshStatusOnly,\s*\d+\)/);
 });
 
 test('gitignore excludes desktop dependency installs', async () => {

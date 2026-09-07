@@ -10,7 +10,6 @@ $root = Get-ProjectRoot
 $pythonExe = Get-CondaPythonExe
 $litellmExe = Get-CondaToolExe -Name "litellm"
 $logDir = Get-LogDir
-$dataDir = "$root/data/open-webui"
 $configPath = "$root/config/litellm.yaml"
 $claudeConfigPath = "$root/config/litellm-claude.yaml"
 $adminPanelDir = "$root/admin-panel"
@@ -23,15 +22,12 @@ Assert-PathExists -Path $configPath -Label "LiteLLM config"
 Assert-PathExists -Path $claudeConfigPath -Label "Claude LiteLLM config"
 Assert-PathExists -Path $adminAppPath -Label "Admin panel app"
 Assert-RequiredEnvValue -Name "LITELLM_MASTER_KEY"
-Assert-RequiredEnvValue -Name "OPEN_WEBUI_SECRET_KEY"
 Ensure-Directory $logDir
-Ensure-Directory $dataDir
 Ensure-Directory (Split-Path -Parent $RuntimeManifestPath)
 
 $litellmPort = [int](Get-EnvValueOrDefault -Name "LITELLM_PORT" -DefaultValue "4100")
 $claudeGatewayPort = [int](Get-EnvValueOrDefault -Name "CLAUDE_LITELLM_PORT" -DefaultValue "4101")
 $claudeInternalPort = [int](Get-EnvValueOrDefault -Name "CLAUDE_LITELLM_INTERNAL_PORT" -DefaultValue "4102")
-$openWebUiPort = [int](Get-EnvValueOrDefault -Name "OPEN_WEBUI_PORT" -DefaultValue "8090")
 $adminPort = [int](Get-EnvValueOrDefault -Name "ADMIN_PANEL_PORT" -DefaultValue "8091")
 $headers = @{ Authorization = "Bearer $env:LITELLM_MASTER_KEY" }
 
@@ -189,7 +185,6 @@ $services = @(
   [ordered]@{ Name = "LiteLLM"; Port = $litellmPort; FilePath = $litellmExe; Arguments = @("--config", $configPath, "--port", "$litellmPort", "--host", "127.0.0.1"); Stdout = "$logDir/litellm.stdout.log"; Stderr = "$logDir/litellm.stderr.log"; HealthUrl = "http://127.0.0.1:$litellmPort/models"; Headers = $headers; Timeout = 60 },
   [ordered]@{ Name = "Claude internal LiteLLM"; Port = $claudeInternalPort; FilePath = $litellmExe; Arguments = @("--config", $claudeConfigPath, "--port", "$claudeInternalPort", "--host", "127.0.0.1"); Stdout = "$logDir/litellm-claude.stdout.log"; Stderr = "$logDir/litellm-claude.stderr.log"; HealthUrl = "http://127.0.0.1:$claudeInternalPort/models"; Headers = $headers; Timeout = 60 },
   [ordered]@{ Name = "Claude Desktop gateway"; Port = $claudeGatewayPort; FilePath = $pythonExe; Arguments = @("-m", "uvicorn", "claude_desktop_gateway:app", "--app-dir", $root, "--host", "127.0.0.1", "--port", "$claudeGatewayPort"); Stdout = "$logDir/claude-desktop-gateway.stdout.log"; Stderr = "$logDir/claude-desktop-gateway.stderr.log"; HealthUrl = "http://127.0.0.1:$claudeGatewayPort/v1/models"; Headers = $headers; Timeout = 60 },
-  [ordered]@{ Name = "Open WebUI"; Port = $openWebUiPort; FilePath = $pythonExe; Arguments = @("-m", "uvicorn", "open_webui.main:app", "--host", "127.0.0.1", "--port", "$openWebUiPort", "--loop", "none"); Stdout = "$logDir/open-webui.stdout.log"; Stderr = "$logDir/open-webui.stderr.log"; HealthUrl = "http://127.0.0.1:$openWebUiPort"; Headers = @{}; Timeout = 90 },
   [ordered]@{ Name = "Admin panel"; Port = $adminPort; FilePath = $pythonExe; Arguments = @("-m", "uvicorn", "app:app", "--app-dir", $adminPanelDir, "--host", "127.0.0.1", "--port", "$adminPort"); Stdout = "$logDir/admin-panel.stdout.log"; Stderr = "$logDir/admin-panel.stderr.log"; HealthUrl = "http://127.0.0.1:$adminPort/api/health"; Headers = @{}; Timeout = 60 }
 )
 
@@ -202,19 +197,6 @@ try {
       continue
     }
 
-    if ($Service.Name -eq "Open WebUI") {
-      $env:FROM_INIT_PY = "true"
-      $env:DATA_DIR = $dataDir
-      $env:OPENAI_API_BASE_URL = "http://127.0.0.1:$litellmPort/v1"
-      $env:OPENAI_API_KEY = $env:LITELLM_MASTER_KEY
-      $env:WEBUI_SECRET_KEY = $env:OPEN_WEBUI_SECRET_KEY
-      $env:RAG_OPENAI_API_BASE_URL = $env:OPENAI_API_BASE_URL
-      $env:RAG_OPENAI_API_KEY = $env:OPENAI_API_KEY
-      $env:USER_AGENT = Get-EnvValueOrDefault -Name "USER_AGENT" -DefaultValue "RelayDeckLocal/1.0"
-      if ([string]::IsNullOrWhiteSpace($env:CORS_ALLOW_ORIGIN)) {
-        $env:CORS_ALLOW_ORIGIN = "http://127.0.0.1:$openWebUiPort;http://127.0.0.1:$adminPort"
-      }
-    }
     if ($Service.Name -eq "Claude Desktop gateway") {
       $env:CLAUDE_LITELLM_INTERNAL_PORT = "$claudeInternalPort"
     }

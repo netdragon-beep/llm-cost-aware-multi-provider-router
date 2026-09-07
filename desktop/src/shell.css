@@ -41,4 +41,21 @@ body { display: flex; flex-direction: column; background: #f1f5f9; color: #0f172
 .error-actions { gap: 8px; margin-top: 10px; }
 .spinner { width: 25px; height: 25px; border: 3px solid #cbd5e1; border-top-color: #0f766e; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-button:focus-visible { outline: 2px solid #14b8a6; outline-offset: 2px; }
+button:focus-visible { outline: 2px solid #9b7cff; outline-offset: 2px; }
+
+/* Keep the management page embedded, but give the desktop shell a softer frame. */
+:root { font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: #eef0f8; background: #10111b; }
+body { background: #171823; color: #eef0f8; }
+.titlebar { height: 48px; padding-left: 18px; background: #11121c; border-bottom: 1px solid rgba(255,255,255,.06); }
+.brand-mark { width: 26px; height: 26px; border-radius: 9px; background: linear-gradient(135deg, #9b7cff, #6d52e8); color: #fff; box-shadow: 0 6px 18px rgba(125,92,255,.3); }
+.window-button:hover { background: #26263a; }
+.statusbar { min-height: 58px; padding: 9px 20px; border-bottom-color: rgba(255,255,255,.07); background: #1b1c29; }
+.status-summary span:last-child { color: #9ca0b5; }
+.service-list { color: #b1b4c7; }
+.toolbar-button, .primary-button { background: linear-gradient(135deg, #8a6dff, #6549de); box-shadow: 0 8px 20px rgba(105,76,226,.22); }
+.toolbar-button:hover, .primary-button:hover { background: linear-gradient(135deg, #9a83ff, #7358ec); }
+.toolbar-button, .primary-button, .secondary-button { border-radius: 12px; }
+.secondary-button { border-color: #393b52; background: #242638; color: #e5e6f0; }
+.secondary-button:hover { background: #2c2e45; }
+.content, #management-panel, .loading-state, .error-state { background: #171823; }
+.spinner { border-color: #393b52; border-top-color: #9b7cff; }

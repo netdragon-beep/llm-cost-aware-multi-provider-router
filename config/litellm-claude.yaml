@@ -173,11 +173,45 @@ model_list:
   litellm_params:
     model: gpt-5.6-terra
     custom_llm_provider: openai
+    api_base: https://totokens.cc
+    api_key: os.environ/RELAYDECK_API_KEY_API_MTA1831L_RP14K7
+    rpm: 120
+    metadata:
+      relaydeck: &id006
+        platform_key: totokens.cc
+        cost_provider_key: billing-supplier_supplier-mt8vdutl-37aeq7-openai
+        supplier_id: supplier_mt8vdutl_37aeq7
+        api_profile_id: api_mta1831l_rp14k7
+        model_route_id: route_gpt-5-6-terra
+        route_binding_id: binding_mta7pauv_hutljw
+        public_model_name: gpt-5.6-terra
+        upstream_model: gpt-5.6-terra
+        relay_label: to-tokens-main
+        api_base_hash: bde0fa7fb5d35506
+        custom_llm_provider: openai
+        client_protocols:
+        - openai
+        - anthropic
+  model_info:
+    relay_label: to-tokens-main
+    public_model_name: gpt-5.6-terra
+    platform_key: totokens.cc
+    supplier_id: supplier_mt8vdutl_37aeq7
+    api_profile_id: api_mta1831l_rp14k7
+    model_route_id: route_gpt-5-6-terra
+    route_binding_id: binding_mta7pauv_hutljw
+    relaydeck: *id006
+    priority: 100
+    enabled: true
+- model_name: claude-haiku-relaydeck-gpt-5-6-terra__2__codex
+  litellm_params:
+    model: gpt-5.6-terra
+    custom_llm_provider: openai
     api_base: https://lingsuan.top/v1
     api_key: os.environ/RELAYDECK_API_KEY_API_MRO6A0ZA_WINVMF
     rpm: 120
     metadata:
-      relaydeck: &id006
+      relaydeck: &id007
         platform_key: lingsuan.top
         cost_provider_key: billing-supplier_supplier-codex-openai-openai
         supplier_id: supplier_codex-openai
@@ -200,8 +234,8 @@ model_list:
     api_profile_id: api_supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf
     model_route_id: route_gpt-5-6-terra
     route_binding_id: binding_route-gpt-5-6-terra-api-supplier-codex-openai-https-lingsuan-top-v1-relaydeck-api-key-api-mro6a0za-winvmf-gpt-5-6-terra-100-129
-    relaydeck: *id006
-    priority: 100
+    relaydeck: *id007
+    priority: 110
     enabled: true
 - model_name: claude-haiku-relaydeck-claude-fable-5-pojia
   litellm_params:
@@ -211,7 +245,7 @@ model_list:
     api_key: os.environ/RELAYDECK_API_KEY_API_MS3LN8FI_YM2YO9
     rpm: 120
     metadata:
-      relaydeck: &id007
+      relaydeck: &id008
         platform_key: lingsuan.top
         cost_provider_key: billing-supplier_supplier-claude-openai-openai
         supplier_id: supplier_claude-openai
@@ -234,7 +268,7 @@ model_list:
     api_profile_id: api_ms3ln8fi_ym2yo9
     model_route_id: route_ms67v6z4_vsx7gs
     route_binding_id: binding_ms3lnvgl_elsyis
-    relaydeck: *id007
+    relaydeck: *id008
     priority: 120
     enabled: true
 router_settings:
@@ -244,6 +278,8 @@ router_settings:
   fallbacks:
   - claude-haiku-relaydeck-claude-fable-5:
     - claude-haiku-relaydeck-claude-fable-5__2__claude
+  - claude-haiku-relaydeck-gpt-5-6-terra:
+    - claude-haiku-relaydeck-gpt-5-6-terra__2__codex
 litellm_settings:
   set_verbose: false
   drop_params: true

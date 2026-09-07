@@ -11,13 +11,13 @@
 请同时下载 Release 中的 `SHA256SUMS.txt` 并校验下载包；不要下载 GitHub 自动生成的源码压缩包作为安装包。
 
 一个面向 Windows 与 macOS 本地环境的多供应商 LLM 网关与管理台。RelayDeck 将
-LiteLLM、Open WebUI 和供应商管理集中到同一套工作流中：客户端只需要连接
+LiteLLM、Claude 网关和供应商管理集中到同一套工作流中：客户端只需要连接
 一个稳定地址，系统负责按模型、优先级、健康状态、额度和成本选择上游，并在
 失败时自动切换。
 
 ## 功能概览
 
-- **统一模型入口**：为 Codex、Open WebUI 和其他 OpenAI 兼容客户端提供统一
+- **统一模型入口**：为 Codex、OpenCode 和其他 OpenAI 兼容客户端提供统一
   的本地网关地址。
 - **公共模型路由**：把多个供应商的原始模型映射为稳定的公共模型名称。
 - **故障转移**：按绑定优先级在已启用的上游之间自动切换。
@@ -46,12 +46,12 @@ RelayDeck 将多个供应商的 API 统一纳入管理台：每个供应商可�
   优先级 3 -> 供应商 C / API 分组 C2 / 上游模型 gpt-5.4-mini
 ```
 
-通过这一层映射，可以在不影响 Codex、Open WebUI 或其他客户端配置的前提下，集中
+通过这一层映射，可以在不影响 Codex、OpenCode 或其他客户端配置的前提下，集中
 调整供应商、API 分组、优先级和路由配置。
 
 ```mermaid
 flowchart LR
-    C["Codex / Open WebUI / API 客户端"] --> G["LiteLLM 网关"]
+    C["Codex / OpenCode / API 客户端"] --> G["LiteLLM 网关"]
     G --> R["RelayDeck 公共模型路由"]
     R --> P1["优先级 1：供应商 API A"]
     R --> P2["优先级 2：供应商 API B"]
@@ -106,7 +106,6 @@ API 卡片与顶部反馈中显示通过或失败原因，作为是否调整、�
 | 客户端 | 接入地址或方式 | 协议与模型发现 | 使用要点 |
 | --- | --- | --- | --- |
 | Codex | `http://127.0.0.1:4100/v1` | OpenAI 兼容；使用已发布公共模型 | 保持一个稳定 Base URL，通过公共模型名访问上游。 |
-| Open WebUI | `http://127.0.0.1:4100/v1` | OpenAI 兼容；读取网关公开模型 | 在 Open WebUI 中配置本地网关密钥与 Base URL。 |
 | 其他 OpenAI 兼容客户端 | `http://127.0.0.1:4100/v1` | OpenAI 兼容 | 使用 `chat/completions` 与模型列表等兼容接口。 |
 | Claude Code | 管理台的 Claude Code 配置入口，网关端口 `4101` | Anthropic 兼容；模型别名为 `claude-relaydeck-*` | 应用配置后完全退出并重新启动 Claude Code，再通过 `/model` 选择模型。 |
 
@@ -116,7 +115,7 @@ API 卡片与顶部反馈中显示通过或失败原因，作为是否调整、�
 
 ## 可观测性与运维
 
-管理台把网关、Open WebUI 和管理服务的运行状态放在同一页面，并提供模型路由、
+管理台把网关和管理服务的运行状态放在同一页面，并提供模型路由、
 供应商/API 分组、网络与对话测试、额度刷新、价格与用量、成本归因、诊断工具和日志
 入口。它帮助操作人员判断某个上游是否应继续启用，而不是静默替用户做不可见的路由
 决策。
@@ -149,7 +148,6 @@ API 卡片与顶部反馈中显示通过或失败原因，作为是否调整、�
 | --- | --- | --- |
 | LiteLLM 网关 | `http://127.0.0.1:4100` | OpenAI 兼容模型入口 |
 | Claude Code 网关 | `http://127.0.0.1:4101` | Claude Code 专用入口 |
-| Open WebUI | `http://127.0.0.1:8090` | 聊天前台 |
 | RelayDeck 管理台 | `http://127.0.0.1:8091` | 供应商、模型、额度与诊断管理 |
 
 ## 前置条件
@@ -157,7 +155,7 @@ API 卡片与顶部反馈中显示通过或失败原因，作为是否调整、�
 
 - Windows PowerShell
 - Conda 与 Python 3.11（建议）
-- 已安装或可安装 LiteLLM 与 Open WebUI 的 Conda 环境
+- 已安装或可安装 LiteLLM 的 Conda 环境
 
 Windows 脚本默认使用 `D:/conda/envs/llm-stack-local`。环境位置不同可设置
 `RELAYDECK_ENV_ROOT`，或调整 `scripts/common.ps1`。
@@ -188,8 +186,8 @@ macOS 默认使用项目内 `.venv`。若虚拟环境位于其他位置，设置
    Copy-Item .env.example .env
    ```
 
-3. 编辑 `.env`，至少替换 `LITELLM_MASTER_KEY`、
-   `OPEN_WEBUI_SECRET_KEY` 和所需供应商的 API Key。不要提交 `.env`。
+3. 编辑 `.env`，至少替换 `LITELLM_MASTER_KEY` 和所需供应商的 API Key。
+   不要提交 `.env`。
 
 4. 启动全部服务：
 
@@ -204,7 +202,6 @@ macOS 默认使用项目内 `.venv`。若虚拟环境位于其他位置，设置
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-litellm.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-open-webui.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-admin-panel.ps1
 ```
 
@@ -230,7 +227,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-llm-stack.ps1
    cp .env.example .env
    ```
 
-   至少设置 `LITELLM_MASTER_KEY`、`OPEN_WEBUI_SECRET_KEY` 和所需供应商密钥。
+   至少设置 `LITELLM_MASTER_KEY` 和所需供应商密钥。
 
 3. 安装 Playwright 浏览器运行时（只在使用浏览器登录或网页额度适配器时需要）：
 
@@ -245,7 +242,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-llm-stack.ps1
    sh ./scripts/stop-llm-stack.sh
    ```
 
-   脚本使用 `run/*.pid` 管理 LiteLLM、Claude Code 网关、Open WebUI 和管理页，日志写入
+   脚本使用 `run/*.pid` 管理 LiteLLM、Claude Code 网关和管理页，日志写入
    `logs/`。启动成功后访问 `http://127.0.0.1:8091`。
 
 ### macOS 发行包首次使用

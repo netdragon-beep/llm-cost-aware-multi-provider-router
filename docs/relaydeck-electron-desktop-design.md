@@ -30,7 +30,7 @@ Electron records every PID it directly starts in its runtime state. It may stop 
 ## User experience
 
 - First launch shows a compact startup state while services are checked or started.
-- Once healthy, the title bar shows management page, LiteLLM, Claude gateway, and Open WebUI status.
+- Once healthy, the title bar shows management page, LiteLLM, and Claude gateway status.
 - Closing the window hides it to the tray. A one-time Chinese hint explains that requests remain available.
 - Tray Exit is the only action that stops Electron-owned services.
 - When the management page cannot start, the shell shows a diagnostic action and the relevant local log path instead of a blank frame.

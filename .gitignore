@@ -8,6 +8,7 @@ config/litellm.yaml
 config/relaydeck-state.json
 config/*.bak-*
 config/*.before-rollback-*
+config/*.before-*
 !config/*.example.yaml
 !config/*.example.json
 

@@ -463,10 +463,10 @@ test('desktop-owned scripts use held process handles with exact manifest identit
   assert.match(startScript, /Start-Process[\s\S]*-PassThru/);
   assert.match(startScript, /Move-Item[\s\S]*RuntimeManifestPath/);
   assert.match(startScript, /Write-DesktopManifest -Records @\(\)[\s\S]*\$services/);
-  assert.match(startScript, /\$env:FROM_INIT_PY = "true"/);
-  assert.match(startScript, /Name = "Open WebUI"; Port = \$openWebUiPort; FilePath = \$pythonExe; Arguments = @\("-m", "uvicorn", "open_webui\.main:app"/);
-  assert.match(startScript, /"--loop", "none"/);
-  assert.doesNotMatch(startScript, /Name = "Open WebUI";[\s\S]*?FilePath = \$openWebUiExe/);
+  assert.deepEqual(
+    [...startScript.matchAll(/Name = "([^"]+)"/g)].map(([, name]) => name),
+    ['LiteLLM', 'Claude internal LiteLLM', 'Claude Desktop gateway', 'Admin panel'],
+  );
   assert.match(startScript, /ExecutablePath = \$executablePath/);
   assert.match(startScript, /CommandLine = \$commandLine/);
   assert.match(startScript, /CreationTime = \$creationTime/);

@@ -3,6 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,12 +45,25 @@ class ClientIntegrationTests(unittest.TestCase):
         self.assertNotIn("saveRoutingDraft", appearance_code)
         self.assertNotIn("/api/", appearance_code)
 
-    def test_gateway_model_lists_render_each_model_as_a_row(self):
+    def test_published_public_model_list_renders_each_model_as_a_row(self):
         source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
 
         self.assertIn("function renderClientGatewayModelList", source)
         self.assertIn("client-gateway-model-row", source)
         self.assertIn("target.appendChild(row)", source)
+
+    def test_published_public_model_list_is_above_agent_registry_in_client_dialog(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+
+        models_index = source.index('id="published-public-models-status"')
+        agents_index = source.index('id="agent-registry-title"')
+        self.assertLess(models_index, agents_index)
+        self.assertIn('id="published-public-model-list"', source)
+        self.assertIn("async function refreshPublishedPublicModels()", source)
+        self.assertIn("await api('/api/client-shortcuts')", source)
+        self.assertIn("当前已发布公共模型", source)
+        self.assertNotIn('id="client-openai-model-list"', source)
+        self.assertNotIn('id="client-claude-model-list"', source)
 
     def test_non_codex_client_sync_has_visible_progress_and_outcome_feedback(self):
         source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
@@ -70,12 +84,152 @@ class ClientIntegrationTests(unittest.TestCase):
         for name in ("codex.svg", "opencode.svg", "claude-code.svg"):
             self.assertTrue((asset_dir / name).is_file())
 
+    def test_agent_registry_keeps_detection_separate_from_gateway_configuration(self):
+        agents = app.agent_integration_registry_status(
+            which=lambda command: r"C:\\Tools\\codex.cmd" if command == "codex" else None
+        )
+        by_id = {agent["id"]: agent for agent in agents}
+
+        self.assertEqual(len(agents), 38)
+        self.assertEqual(
+            {agent["id"] for agent in agents if agent["integration_level"] == "full"},
+            {"codex", "opencode", "claude-code"},
+        )
+        self.assertTrue(by_id["codex"]["detected"])
+        self.assertFalse(by_id["aider"]["detected"])
+        self.assertEqual(by_id["aider"]["configuration_status"], "仅检测，接入方式待验证")
+        self.assertIn("不会自动追加", by_id["aider"]["safe_mode_notice"])
+        self.assertNotIn("--yolo", json.dumps(agents, ensure_ascii=False))
+
+    def test_workbuddy_and_dumate_remain_detection_only(self):
+        agents = app.agent_integration_registry_status(
+            which=lambda command: r"C:\\Tools\\codebuddy.cmd" if command == "codebuddy" else None
+        )
+        by_id = {agent["id"]: agent for agent in agents}
+
+        self.assertTrue(by_id["workbuddy"]["detected"])
+        self.assertEqual(by_id["workbuddy"]["command"], "codebuddy / cbc")
+        self.assertEqual(by_id["workbuddy"]["integration_level"], "detect_only")
+        self.assertIn("内置 CodeBuddy CLI", by_id["workbuddy"]["configuration_status"])
+        self.assertEqual(by_id["dumate"]["integration_level"], "detect_only")
+        self.assertFalse(by_id["dumate"]["gateway_configuration_supported"])
+        self.assertIn("暂不支持外部网关配置", by_id["dumate"]["configuration_status"])
+        self.assertTrue(by_id["aider"]["gateway_configuration_supported"])
+
+    def test_unsupported_gateway_agent_stays_last_despite_local_activity(self):
+        state = {
+            "agent_activity": {
+                "dumate": {"last_viewed_at": 999999},
+                "aider": {"last_viewed_at": 10},
+            }
+        }
+        with patch.object(app, "load_management_state", return_value=state):
+            agents = app.agent_integration_registry_status(which=lambda command: None)
+
+        self.assertEqual(agents[-1]["id"], "dumate")
+        self.assertFalse(agents[-1]["gateway_configuration_supported"])
+
+    def test_agent_registry_prioritizes_configured_and_recent_clients(self):
+        clients = {
+            "clients": {
+                "codex": {"configured": True, "model_count": 3, "config_updated_at": 100},
+                "opencode": {"configured": True, "model_count": 3, "config_updated_at": 200},
+                "claude_code": {"configured": False, "model_count": 3, "config_updated_at": 0},
+            }
+        }
+        with patch.object(app, "client_integration_status", return_value=clients):
+            agents = app.agent_integration_registry_status(
+                which=lambda command: r"C:\\Tools\\claude.cmd" if command == "claude" else None
+            )
+
+        self.assertEqual([agent["id"] for agent in agents[:3]], ["opencode", "codex", "claude-code"])
+        self.assertEqual(agents[0]["config_updated_at"], 200)
+        self.assertEqual(agents[1]["config_updated_at"], 100)
+
+    def test_agent_registry_prioritizes_configured_then_detected_then_viewed(self):
+        clients = {
+            "clients": {
+                "codex": {"configured": True, "model_count": 3, "config_updated_at": 100},
+                "opencode": {"configured": False, "model_count": 3, "config_updated_at": 0},
+                "claude_code": {"configured": False, "model_count": 3, "config_updated_at": 0},
+            }
+        }
+        state = {
+            "agent_activity": {
+                "codex": {"last_configured_at": 200, "last_viewed_at": 50},
+                "aider": {"last_viewed_at": 150},
+                "openclaw": {"last_viewed_at": 120},
+            }
+        }
+        with (
+            patch.object(app, "load_management_state", return_value=state),
+            patch.object(app, "client_integration_status", return_value=clients),
+        ):
+            agents = app.agent_integration_registry_status(
+                which=lambda command: r"C:\\Tools\\opencode.cmd" if command == "opencode" else None
+            )
+
+        self.assertEqual([agent["id"] for agent in agents[:4]], ["codex", "opencode", "aider", "openclaw"])
+        self.assertEqual(agents[0]["last_configured_at"], 200)
+        self.assertEqual(agents[2]["last_viewed_at"], 150)
+
+    def test_agent_activity_is_local_and_preserved_by_management_state_save(self):
+        with TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "relaydeck-state.json"
+            state_path.write_text(
+                json.dumps({"suppliers": [], "api_profiles": [], "model_routes": [], "route_bindings": [], "agent_activity": {"codex": {"last_viewed_at": 10}}}),
+                encoding="utf-8",
+            )
+            with patch.object(app, "STATE_PATH", state_path):
+                activity = app.record_agent_activity("codex", "configured", timestamp=20)
+                self.assertEqual(activity, {"last_viewed_at": 10, "last_configured_at": 20})
+                saved = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["agent_activity"]["codex"]["last_configured_at"], 20)
+                app.save_management_state([], [], [], [], [], {}, {})
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["agent_activity"]["codex"]["last_viewed_at"], 10)
+                self.assertEqual(persisted["agent_activity"]["codex"]["last_configured_at"], 20)
+
+    def test_agent_registry_ui_renders_every_agent_in_one_icon_list(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+        asset_dir = ROOT / "admin-panel" / "static" / "assets" / "agent-icons"
+
+        self.assertIn('id="agent-registry-list"', source)
+        self.assertIn('id="btn-refresh-agent-registry"', source)
+        self.assertIn('class="agent-integration-list"', source)
+        self.assertIn("agent-integration-row", source)
+        self.assertIn("function renderAgentRegistry(agents)", source)
+        self.assertIn("function createAgentIcon(agent)", source)
+        self.assertIn("const AGENT_ICON_PATHS", source)
+        self.assertIn("function refreshAgentRegistry(force = false)", source)
+        self.assertIn("/api/agent-integrations", source)
+        self.assertNotIn("其他 Agent 检测与接入状态", source)
+        self.assertIn("agent.safe_mode_notice", source)
+        self.assertIn("gateway_configuration_supported", source)
+        self.assertIn("暂不支持", source)
+        self.assertIn("refreshAgentRegistry();", source)
+        self.assertTrue((asset_dir / "grok.png").is_file())
+        self.assertTrue((asset_dir / "aider.svg").is_file())
+        self.assertTrue((asset_dir / "workbuddy.png").is_file())
+        self.assertTrue((asset_dir / "LICENSE.orca.txt").is_file())
+
+    def test_agent_list_surfaces_recent_configuration_time(self):
+        source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("config_updated_at", source)
+        self.assertIn("最近修改：", source)
+        self.assertIn("agent.configured ? '已配置'", source)
+        self.assertIn("function agentActivityText(agent)", source)
+        self.assertIn("function recordAgentView(agentId)", source)
+        self.assertIn("/api/agent-integrations/${encodeURIComponent(agentId)}/activity", source)
+        self.assertIn("row.addEventListener('click', () => recordAgentView(agent.id));", source)
+
     def test_model_mapping_controls_are_scoped_to_codex_and_claude_cards(self):
         source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('data-client-shortcut-client="codex"', source)
-        self.assertIn('data-client-shortcut-client="claude_code"', source)
-        self.assertIn('>模型对应映射</button>', source)
+        self.assertIn("agent.id === 'codex' || agent.id === 'claude-code'", source)
+        self.assertIn("mapping.textContent = '模型对应映射';", source)
+        self.assertIn("showClientShortcuts(agent.id === 'claude-code' ? 'claude_code' : 'codex')", source)
         self.assertNotIn('id="btn-manage-client-shortcuts"', source)
         self.assertIn('let clientShortcutSlots = {};', source)
         self.assertIn('data-claude-shortcut-row', source)
@@ -288,6 +442,47 @@ class ClientIntegrationTests(unittest.TestCase):
 
         self.assertIn('model_catalog_json = "C:/Users/Administrator/.codex/relaydeck-model-catalog.json"', candidate)
 
+    def test_codex_sync_summary_describes_provider_change_without_key_value(self):
+        current = '''model_provider = "lingsuan"
+model = "claude-sonnet"
+[model_providers.lingsuan]
+base_url = "https://example.invalid/v1"
+env_key = "LINGSUAN_API_KEY"
+'''
+        candidate = '''model_provider = "relaydeck"
+model = "gpt-5.6-terra"
+[model_providers.relaydeck]
+base_url = "http://127.0.0.1:4100/v1"
+env_key = "LITELLM_MASTER_KEY"
+'''
+        summary = app.codex_sync_preview_summary(current, candidate)
+
+        self.assertIn("lingsuan", summary["current_route"])
+        self.assertIn("relaydeck", summary["next_route"])
+        self.assertIn("LINGSUAN_API_KEY", summary["current_credential"])
+        self.assertIn("LITELLM_MASTER_KEY", summary["next_credential"])
+        self.assertIn("不会删除", summary["preservation"])
+
+    def test_claude_sync_summary_redacts_token_value(self):
+        current = json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.invalid",
+                    "ANTHROPIC_AUTH_TOKEN": "private-token",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                }
+            }
+        )
+        candidate = app.build_claude_code_settings_content(current, "http://127.0.0.1:4101")
+        summary = app.claude_code_sync_preview_summary(current, candidate)
+
+        self.assertIn("https://example.invalid", summary["current_route"])
+        self.assertIn("http://127.0.0.1:4101", summary["next_route"])
+        self.assertNotIn("private-token", json.dumps(summary, ensure_ascii=False))
+        self.assertIn("保持不变", summary["preservation"])
+        self.assertIn("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", summary["preservation"])
+        self.assertNotIn("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", candidate)
+
     def test_codex_preview_candidate_does_not_mutate_config_until_apply(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -322,7 +517,15 @@ class ClientIntegrationTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             settings_path = Path(directory) / "settings.json"
             settings_path.write_text(
-                json.dumps({"env": {"OTHER": "preserved", "ANTHROPIC_AUTH_TOKEN": "private-token"}}),
+                json.dumps(
+                    {
+                        "env": {
+                            "OTHER": "preserved",
+                            "ANTHROPIC_AUTH_TOKEN": "private-token",
+                            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
             candidate = app.build_claude_code_settings_content(
@@ -339,6 +542,7 @@ class ClientIntegrationTests(unittest.TestCase):
             self.assertEqual(saved["env"]["OTHER"], "preserved")
             self.assertEqual(saved["env"]["ANTHROPIC_BASE_URL"], "http://127.0.0.1:4101")
             self.assertEqual(saved["env"]["ANTHROPIC_AUTH_TOKEN"], "gateway-token")
+            self.assertNotIn("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", saved["env"])
 
     def test_claude_code_backup_restore_rejects_path_traversal(self):
         with TemporaryDirectory() as directory:
@@ -360,6 +564,10 @@ class ClientIntegrationTests(unittest.TestCase):
         self.assertIn("function showClaudeSyncPreview", source)
         self.assertIn("/api/client-integrations/claude-code/apply-preview", source)
         self.assertIn("? showClaudeSyncPreview()", source)
+        self.assertIn('id="codex-sync-summary"', source)
+        self.assertIn('id="claude-sync-summary"', source)
+        self.assertIn("function renderSyncPreviewSummary", source)
+        self.assertIn("result.sync_summary", source)
 
     def test_configuration_diffs_render_colored_additions_and_deletions(self):
         source = (ROOT / "admin-panel" / "static" / "index.html").read_text(encoding="utf-8")

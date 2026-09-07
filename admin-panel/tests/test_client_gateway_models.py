@@ -10,7 +10,7 @@ import app  # noqa: E402
 
 class ClientGatewayModelsTests(unittest.TestCase):
     @patch.object(app, "parse_env_file", return_value={"LITELLM_MASTER_KEY": "test"})
-    @patch.object(app, "get_ports", return_value=(4100, 8090, 8091))
+    @patch.object(app, "get_ports", return_value=(4100, 8091))
     @patch.object(app.httpx, "Client")
     def test_lists_active_openai_and_claude_models_without_secrets(self, client, _ports, _env):
         responses = [

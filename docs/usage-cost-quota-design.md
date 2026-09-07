@@ -210,7 +210,7 @@
 
 ## 6.4 Phase 3：接入 LiteLLM spend tracking
 
-目标：把 Open WebUI、Codex、Continue 等经 LiteLLM 产生的真实业务流量纳入同一套 usage 看板。
+目标：把 Codex、OpenCode、Claude Code 等经 LiteLLM 产生的真实业务流量纳入同一套 usage 看板。
 
 交付：
 
@@ -709,7 +709,7 @@ used_percent = balance_used / balance_total * 100
 
 1. 第一批必须支持的余额适配器名单。
 2. 是否接受在第一阶段仅支持“累计池”方式计算真实人民币成本。
-3. 是否需要在汇总中区分客户端来源，例如 Open WebUI、Codex、Continue。
+3. 是否需要在汇总中区分客户端来源，例如 Codex、OpenCode、Claude Code。
 4. 是否把价格主币种统一为 `USD`，而把真实性价比统一为 `CNY`。
 
 ## 13. 推荐落地顺序

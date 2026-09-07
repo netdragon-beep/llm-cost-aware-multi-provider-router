@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="OMP">
+  <defs><linearGradient id="omp-gradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f657bb"/><stop offset=".5" stop-color="#9a57e8"/><stop offset="1" stop-color="#70d6e8"/></linearGradient></defs>
+  <path fill="url(#omp-gradient)" d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z"/>
+</svg>

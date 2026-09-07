@@ -121,7 +121,7 @@ class RawModelMappingUiTests(unittest.TestCase):
     def test_model_sync_uses_floating_notice_for_pending_success_empty_and_failures(self):
         page = INDEX_HTML.read_text(encoding="utf-8")
 
-        self.assertIn("正在同步模型列表", page)
+        self.assertIn("正在请求供应商模型列表", page)
         self.assertIn("同步完成，但未发现模型", page)
         self.assertIn("同步完成：发现", page)
         self.assertIn("formatModelSyncError", page)

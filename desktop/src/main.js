@@ -1,5 +1,4 @@
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray } = require('electron');
-const net = require('node:net');
 const path = require('node:path');
 const {
   MANAGEMENT_PANEL_URL,
@@ -7,13 +6,6 @@ const {
   isManagementPanelHealthy,
   stopElectronOwnedServices,
 } = require('./service-manager');
-
-const SERVICE_PORTS = Object.freeze({
-  management: 8091,
-  litellm: 4100,
-  claude: 4101,
-  openWebUI: 8090,
-});
 
 let mainWindow;
 let tray;
@@ -26,42 +18,57 @@ function serviceOptions() {
   };
 }
 
-function isPortOpen(port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host: '127.0.0.1', port });
-    const finish = (open) => {
-      socket.destroy();
-      resolve(open);
-    };
-    socket.setTimeout(1_500);
-    socket.once('connect', () => finish(true));
-    socket.once('timeout', () => finish(false));
-    socket.once('error', () => finish(false));
-  });
+async function fetchManagementServiceStatus() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1_500);
+  try {
+    const response = await fetch(`${MANAGEMENT_PANEL_URL}/api/service-status`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Service status request failed with HTTP ${response.status}`);
+    }
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function getRelayDeckStatus() {
-  const [management, litellm, claude, openWebUI] = await Promise.all([
-    isManagementPanelHealthy(fetch, MANAGEMENT_PANEL_URL, { requestTimeoutMs: 1_500 }),
-    isPortOpen(SERVICE_PORTS.litellm),
-    isPortOpen(SERVICE_PORTS.claude),
-    isPortOpen(SERVICE_PORTS.openWebUI),
-  ]);
+  const managementHealthy = await isManagementPanelHealthy(fetch, MANAGEMENT_PANEL_URL, { requestTimeoutMs: 1_500 });
+  let serviceStatus = {};
+  if (managementHealthy) {
+    try {
+      serviceStatus = (await fetchManagementServiceStatus()).service_status || {};
+    } catch (error) {
+      return {
+        services: { management: true, litellm: false, claude: false },
+        managementHealthy: true,
+        stackHealthy: false,
+        healthy: true,
+        error: error instanceof Error ? error.message : String(error),
+        managementUrl: MANAGEMENT_PANEL_URL,
+      };
+    }
+  }
+  const services = {
+    management: managementHealthy,
+    litellm: Boolean(serviceStatus.litellm?.listening),
+    claude: Boolean(serviceStatus.claude?.listening),
+  };
+  const stackHealthy = services.management && services.litellm && services.claude;
   return {
-    services: {
-      management,
-      litellm,
-      claude,
-      openWebUI,
-    },
-    healthy: management,
+    services,
+    managementHealthy,
+    stackHealthy,
+    healthy: managementHealthy,
     managementUrl: MANAGEMENT_PANEL_URL,
   };
 }
 
 async function isRelayDeckStackHealthy() {
   const status = await getRelayDeckStatus();
-  return Object.values(status.services).every(Boolean);
+  return status.stackHealthy;
 }
 
 function desktopServiceOptions() {

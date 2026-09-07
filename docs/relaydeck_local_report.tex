@@ -81,7 +81,7 @@
 
 \section{项目概述}
 
-RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台。项目将 LiteLLM 统一网关、Open WebUI 聊天前台和自研管理后台整合在一起，目标是解决多供应商模型接入、统一命名、路由兜底、额度监控、接口测试和运维可视化等问题。
+RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台。项目将 LiteLLM 统一网关、Claude 网关和自研管理后台整合在一起，目标是解决多供应商模型接入、统一命名、路由兜底、额度监控、接口测试和运维可视化等问题。
 
 与普通的单模型调用工具相比，本项目更强调“复杂路由的可管理性”。系统不只是把一个模型 API 接进来，而是支持同一个公共模型名挂接多个上游供应商，并按优先级形成主路由、第一备用、第二备用等 fallback 链路，从而提升整体可用性与可维护性。
 
@@ -97,7 +97,7 @@ RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台�
   \item 支持同一公共模型挂接多个上游绑定，并按优先级顺序完成请求转发与失败兜底。
   \item 支持额度查看、周期刷新、供应商余额抓取和人工校准记录。
   \item 支持管理端对单个 API、单个模型绑定以及整条模型路由进行测试和调试。
-  \item 支持聊天前台通过统一网关直接调用已经配置好的模型，而不是手工切换不同供应商。
+  \item 支持 Codex、OpenCode 和 Claude Code 通过统一网关调用已经配置好的模型，而不是手工切换不同供应商。
 \end{enumerate}
 
 \subsection{功能性需求}
@@ -134,13 +134,13 @@ RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台�
 \begin{enumerate}[label=\arabic*.]
   \item 管理层：由管理页负责供应商、模型、额度、环境变量、测试与日志管理。
   \item 路由层：由 LiteLLM 负责统一模型入口、公共模型别名、路由顺序和请求转发。
-  \item 交互层：由 Open WebUI 负责最终聊天交互界面。
+  \item 客户端接入层：由 Codex、OpenCode 和 Claude Code 通过对应协议调用统一网关。
 \end{enumerate}
 
 其请求链路可概括为：
 
 \begin{center}
-用户请求 $\rightarrow$ Open WebUI $\rightarrow$ LiteLLM $\rightarrow$ 目标供应商 API
+用户请求 $\rightarrow$ 客户端 $\rightarrow$ LiteLLM 或 Claude 网关 $\rightarrow$ 目标供应商 API
 \end{center}
 
 \subsection{关键设计思想}
@@ -199,7 +199,7 @@ RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台�
 
 \begin{enumerate}[label=\arabic*.]
   \item 测试网络：检查 API Base、鉴权和 \texttt{/models} 连通性，成本低，适合批量排查。
-  \item 测试对话：发送最小聊天请求，验证模型是否真能被聊天前台使用，结果更接近实际使用场景。
+  \item 测试对话：发送最小聊天请求，验证模型是否真能被客户端调用，结果更接近实际使用场景。
 \end{enumerate}
 
 图 \ref{fig:route-bindings-network} 显示了批量测试网络后的状态结果。可以看到不同绑定的网络标签已经分别显示为“可用”“待确认”或“异常”，这有助于在不额外消耗大量额度的情况下先完成第一轮筛查。
@@ -272,7 +272,6 @@ RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台�
   \item 操作系统：Windows 本地环境
   \item 管理后台：\texttt{127.0.0.1:8091}
   \item LiteLLM 网关：\texttt{127.0.0.1:4100}
-  \item Open WebUI：\texttt{127.0.0.1:8090}
 \end{itemize}
 
 \subsection{测试方法}
@@ -283,7 +282,7 @@ RelayDeck Local 是一个面向本地部署场景的模型路由与管理平台�
   \item 页面功能测试：检查管理页能否正确渲染、折叠、搜索、置顶和保存。
   \item 网络联通测试：验证 API 鉴权与 \texttt{/models} 接口是否可用。
   \item 真实对话测试：通过最小 \texttt{chat/completions} 请求测试模型是否真能对话。
-  \item 系统联调测试：在聊天前台中发起实际对话，验证统一模型入口与 fallback 是否按预期工作。
+  \item 系统联调测试：通过客户端发起实际对话，验证统一模型入口与 fallback 是否按预期工作。
 \end{enumerate}
 
 最小对话测试使用的提示词如下：
@@ -337,7 +336,7 @@ Reply with OK only.
   \item 完善“公共模型名 - 上游真实模型名”映射规则，进一步减少前台重复模型展示。
   \item 为更多供应商补充额度适配脚本和统一模板，降低新增供应商的接入成本。
   \item 在调试视图中展示最近一次命中供应商、命中时间与 fallback 轨迹。
-  \item 继续优化聊天前台模型列表，只暴露最终可用的公共模型名。
+  \item 继续优化客户端模型列表，只暴露最终可用的公共模型名。
 \end{enumerate}
 
 \section{总结}
